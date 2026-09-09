@@ -5,7 +5,6 @@ __pycache__/
 .env
 models/
 *.pt
-backend/models/best.pt
 
 # Node / React
 node_modules/
