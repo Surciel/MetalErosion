@@ -3,6 +3,9 @@ venv/
 __pycache__/
 *.pyc
 .env
+models/
+*.pt
+backend/models/best.pt
 
 # Node / React
 node_modules/
