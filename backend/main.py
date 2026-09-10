@@ -151,3 +151,61 @@ async def analyze_corrosion(
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+from fastapi import HTTPException
+from pydantic import BaseModel
+from sklearn.linear_model import LinearRegression
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
+
+class PredictionRequest(BaseModel):
+    user_id: str
+    # If you later add asset IDs, include it here so you only predict for one specific metal object
+
+@app.post("/predict-maintenance")
+async def predict_maintenance(request: PredictionRequest):
+    # 1. Fetch historical scans from Supabase (ordered by oldest to newest)
+    response = supabase.table("scans").select("created_at, rust_percentage").eq("user_id", request.user_id).order("created_at").execute()
+    
+    data = response.data
+    if not data or len(data) < 2:
+        return {"message": "Not enough historical data to generate a prediction. Need at least 2 scans."}
+
+    # 2. Format the data for Scikit-Learn
+    df = pd.DataFrame(data)
+    df['created_at'] = pd.to_datetime(df['created_at'])
+    
+    # Convert dates to "days since first scan" for the X-axis
+    baseline_date = df['created_at'].min()
+    df['days_since_start'] = (df['created_at'] - baseline_date).dt.total_seconds() / 86400
+    
+    X = df[['days_since_start']].values # Features: Time
+    y = df['rust_percentage'].values    # Target: Rust %
+
+    # 3. Train the Linear Regression Model
+    model = LinearRegression()
+    model.fit(X, y)
+
+    # 4. Predict when rust hits a critical threshold (e.g., 33%)
+    critical_rust_threshold = 33.0
+    
+    # Equation of a line: y = mx + b  ->  x = (y - b) / m
+    slope = model.coef_[0]
+    intercept = model.intercept_
+    
+    if slope <= 0:
+        return {
+            "status": "Stable", 
+            "message": "Rust is not actively progressing based on current data."
+        }
+
+    days_until_critical = (critical_rust_threshold - intercept) / slope
+    estimated_failure_date = baseline_date + timedelta(days=days_until_critical)
+
+    return {
+        "status": "Predictive Analysis Complete",
+        "current_trend": f"+{slope:.2f}% rust per day",
+        "estimated_critical_date": estimated_failure_date.strftime("%Y-%m-%d"),
+        "days_remaining": int(days_until_critical - df['days_since_start'].max())
+    }
