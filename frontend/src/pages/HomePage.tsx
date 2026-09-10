@@ -6,10 +6,12 @@ import type { View } from "@/types"
 
 export default function HomePage({
   username,
+  isAdmin = false,
   onUpload,
   onNavigate,
 }: {
   username: string
+  isAdmin?: boolean
   onUpload: (file: File, url: string) => void
   onNavigate: (v: View) => void
 }) {
@@ -49,6 +51,7 @@ export default function HomePage({
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
         onNavigate={onNavigate}
+        isAdmin={isAdmin}
       />
 
       <main className="flex-1 flex items-center py-16 px-4">

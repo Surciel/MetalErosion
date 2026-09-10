@@ -4,10 +4,16 @@ export default function SideMenu({
   open,
   onClose,
   onNavigate,
+  isAdmin = false,
+  adminOnly = false,
+  onLogout,
 }: {
   open: boolean
   onClose: () => void
   onNavigate: (v: View) => void
+  isAdmin?: boolean
+  adminOnly?: boolean
+  onLogout?: () => void
 }) {
   return (
     <>
@@ -21,10 +27,14 @@ export default function SideMenu({
         }}
       >
         <nav className="flex flex-col gap-2 mt-4">
-          {([
-            { label: "Home", view: "home" as View },
-            { label: "History", view: "history" as View },
-          ] as const).map((item) => (
+          {(adminOnly
+            ? [{ label: "Admin", view: "admin" as View }]
+            : [
+                { label: "Home", view: "home" as View },
+                { label: "History", view: "history" as View },
+                ...(isAdmin ? [{ label: "Admin", view: "admin" as View }] : []),
+              ]
+          ).map((item) => (
             <button
               key={item.view}
               onClick={() => {
@@ -40,7 +50,8 @@ export default function SideMenu({
         <div className="mt-auto">
           <button
             onClick={() => {
-              onNavigate("landing")
+              if (onLogout) onLogout()
+              else onNavigate("landing")
               onClose()
             }}
             className="w-full text-left px-4 py-3 rounded text-red-300 hover:text-red-200 hover:bg-red-900/20 transition-all font-medium text-sm"
