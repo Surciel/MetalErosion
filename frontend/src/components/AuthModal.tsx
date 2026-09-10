@@ -1,5 +1,5 @@
 import { useState } from "react"
-import type { View } from "@/types"
+import type { LoginCredentials, SignupCredentials, View } from "@/types"
 
 function Logo() {
   return (
@@ -24,17 +24,17 @@ function LoginForm({
   onLogin,
   onSwitch,
 }: {
-  onLogin: (u: string) => void
+  onLogin: (credentials: LoginCredentials) => void
   onSwitch: () => void
 }) {
-  const [username, setUsername] = useState("")
+  const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        if (username.trim()) onLogin(username.trim())
+        if (email.trim() && password) onLogin({ email: email.trim(), password })
       }}
       className="flex flex-col gap-3"
       onClick={(e) => e.stopPropagation()}
@@ -46,9 +46,10 @@ function LoginForm({
 
       <input
         type="text"
-        placeholder="Username"
-        value={username}
-        onChange={(e) => setUsername(e.target.value)}
+        type="email"
+        placeholder="Email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
         className="w-full px-4 py-3 rounded-lg text-sm text-white placeholder-white/40 outline-none transition-all"
         style={{ background: "var(--color-btn)" }}
         required
@@ -98,7 +99,7 @@ function SignupForm({
   onSignup,
   onSwitch,
 }: {
-  onSignup: (u: string) => void
+  onSignup: (credentials: SignupCredentials) => void
   onSwitch: () => void
 }) {
   const [email, setEmail] = useState("")
@@ -132,7 +133,9 @@ function SignupForm({
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        if (username.trim() && password === retype) onSignup(username.trim())
+        if (username.trim() && email.trim() && password && password === retype) {
+          onSignup({ username: username.trim(), email: email.trim(), password })
+        }
       }}
       className="flex flex-col gap-3"
       onClick={(e) => e.stopPropagation()}
@@ -190,8 +193,8 @@ export default function AuthModal({
   onSwitchMode,
 }: {
   mode: "login" | "signup"
-  onLogin: (u: string) => void
-  onSignup: (u: string) => void
+  onLogin: (credentials: LoginCredentials) => void
+  onSignup: (credentials: SignupCredentials) => void
   onClose: () => void
   onSwitchMode: (m: View) => void
 }) {

@@ -2,7 +2,7 @@ import { useState, useRef } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import PageGrid from "@/components/PageGrid"
-import { severityColor } from "@/data/mockData"
+import { severityColor } from "@/utils/severity"
 import type { ScanResult, View } from "@/types"
 
 type SeverityBadgeProps = {

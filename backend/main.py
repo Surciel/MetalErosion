@@ -8,25 +8,15 @@ from ultralytics import YOLO
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
-from dotenv import load_dotenv
-import os
-
-# 1. Force dotenv to override any cached variables
 load_dotenv(override=True)
 
-# 2. Remove the fallback strings so it crashes immediately if empty, rather than sending fake keys
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# 3. TEMPORARY DEBUG: Print the loaded values to your terminal
-print("----- DEBUG START -----")
-print(f"URL Loaded: {SUPABASE_URL}")
-print(f"KEY Loaded: {str(SUPABASE_KEY)[:15]}... (truncated for security)")
-print("----- DEBUG END -----")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be configured.")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-load_dotenv()
 
 app = FastAPI(title="MetalErosion API", version="1.0")
 
@@ -37,11 +27,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Initialize Supabase Client
-SUPABASE_URL = os.getenv("SUPABASE_URL", "YOUR_SUPABASE_PROJECT_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "YOUR_SUPABASE_SERVICE_OR_ANON_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 model = YOLO("models/best.pt")
 

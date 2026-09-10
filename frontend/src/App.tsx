@@ -1,5 +1,4 @@
 import { useState } from "react"
-import { MOCK_HISTORY } from "@/data/mockData"
 import LandingPage from "@/pages/LandingPage"
 import AuthModal from "@/components/AuthModal"
 import HomePage from "@/pages/HomePage"
@@ -8,31 +7,51 @@ import ResultsPage from "@/pages/ResultsPage"
 import InfoPage from "@/pages/InfoPage"
 import HistoryPage from "@/pages/HistoryPage"
 import HistoryDetailPage from "@/pages/HistoryDetailPage"
-import type { View, ScanResult } from "@/types"
+import AdminPage from "@/pages/AdminPage"
+import { getAdminMetrics } from "@/utils/adminMetrics"
+import type {
+  Account,
+  LoginCredentials,
+  MetricRange,
+  RecoveryRequest,
+  ScanResult,
+  SignupCredentials,
+  View,
+} from "@/types"
 
 export default function App() {
   const [view, setView] = useState<View>("landing")
-  const [username, setUsername] = useState("User")
+  const [activeAccount, setActiveAccount] = useState<Account | null>(null)
+  const [accounts] = useState<Account[]>([])
+  const [recoveryRequests] = useState<RecoveryRequest[]>([])
+  const [metricRange, setMetricRange] = useState<MetricRange>("month")
+  const [authError, setAuthError] = useState("")
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [uploadedImageUrl, setUploadedImageUrl] = useState("")
   const [uploadedImageName, setUploadedImageName] = useState("")
   const [currentResult, setCurrentResult] = useState<ScanResult | null>(null)
   const [sessionScans, setSessionScans] = useState<ScanResult[]>([])
-  const [history, setHistory] = useState<ScanResult[]>(MOCK_HISTORY)
+  const [history] = useState<ScanResult[]>([])
   const [selectedHistoryScan, setSelectedHistoryScan] =
     useState<ScanResult | null>(null)
 
-  const handleLogin = (u: string) => {
-    setUsername(u)
-    setSessionScans([])
-    setView("home")
+  const handleLogin = (_credentials: LoginCredentials) => {
+    setAuthError("Supabase authentication is not connected yet.")
   }
-  const handleSignup = (u: string) => {
-    setUsername(u)
+  const handleSignup = (_credentials: SignupCredentials) => {
+    setAuthError("Supabase authentication is not connected yet.")
+  }
+
+  const handleLogout = () => {
+    setActiveAccount(null)
     setSessionScans([])
-    setView("home")
+    setCurrentResult(null)
+    setUploadedFile(null)
+    setView("landing")
   }
 
   const handleUpload = (file: File, url: string) => {
+    setUploadedFile(file)
     setUploadedImageUrl(url)
     setUploadedImageName(file.name)
     setView("calculating")
@@ -41,7 +60,6 @@ export default function App() {
   const handleCalculationDone = (result: ScanResult) => {
     setCurrentResult(result)
     setSessionScans((prev) => [...prev, result])
-    setHistory((prev) => [result, ...prev])
     setView("results")
   }
 
@@ -49,6 +67,9 @@ export default function App() {
     setSelectedHistoryScan(scan)
     setView("history-detail")
   }
+
+  const username = activeAccount?.username ?? "User"
+  const adminMetrics = getAdminMetrics(accounts, history, metricRange)
 
   switch (view) {
     case "landing":
@@ -66,12 +87,40 @@ export default function App() {
               onSwitchMode={setView}
             />
           )}
+            {authError && (
+              <p className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 rounded-lg bg-red-900/90 px-4 py-3 text-sm text-white shadow-lg">
+                {authError}
+              </p>
+            )}
         </>
       )
     case "home":
       return (
         <HomePage
           username={username}
+          isAdmin={activeAccount?.role === "admin"}
+          onUpload={handleUpload}
+          onNavigate={setView}
+        />
+      )
+    case "admin":
+      return activeAccount?.role === "admin" ? (
+        <AdminPage
+          username={username}
+          accounts={accounts}
+          metrics={adminMetrics}
+          recoveryRequests={recoveryRequests}
+          onNavigate={setView}
+          onLogout={handleLogout}
+          onRangeChange={setMetricRange}
+            onUpdateAccount={() => undefined}
+            onToggleAccount={() => undefined}
+            onHandleRecovery={() => undefined}
+        />
+      ) : (
+        <HomePage
+          username={username}
+          isAdmin={activeAccount?.role === "admin"}
           onUpload={handleUpload}
           onNavigate={setView}
         />
@@ -82,6 +131,7 @@ export default function App() {
           username={username}
           imageUrl={uploadedImageUrl}
           imageName={uploadedImageName}
+          file={uploadedFile}
           onDone={handleCalculationDone}
         />
       )

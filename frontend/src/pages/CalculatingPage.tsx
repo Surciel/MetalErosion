@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import PageGrid from "@/components/PageGrid"
-import { generateMockResult } from "@/data/mockData"
+import { analyzeCorrosion } from "@/services/api"
 import type { ScanResult } from "@/types"
 
 const PHASES = [
@@ -18,31 +18,50 @@ export default function CalculatingPage({
   username,
   imageUrl,
   imageName,
+  file,
   onDone,
 }: {
   username: string
   imageUrl: string
   imageName: string
+  file: File | null
   onDone: (result: ScanResult) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [progress, setProgress] = useState(0)
   const [phase, setPhase] = useState(PHASES[0])
+  const [error, setError] = useState("")
 
   useEffect(() => {
-    let p = 0
-    const interval = setInterval(() => {
-      p += Math.random() * 6 + 2
-      if (p >= 100) {
-        p = 100
-        clearInterval(interval)
-        setTimeout(() => onDone(generateMockResult(imageName, imageUrl)), 600)
-      }
-      setProgress(Math.min(p, 100))
-      setPhase(PHASES[Math.floor((p / 100) * (PHASES.length - 1))])
-    }, 250)
-    return () => clearInterval(interval)
-  }, [])
+    if (!file) {
+      setError("No image was selected for analysis.")
+      return
+    }
+
+    let cancelled = false
+    const progressTimer = window.setInterval(() => {
+      setProgress((current) => Math.min(current + 3, 90))
+    }, 300)
+
+    setPhase(PHASES[0])
+    analyzeCorrosion(file, imageUrl)
+      .then((result) => {
+        if (cancelled) return
+        setProgress(100)
+        setPhase(PHASES[PHASES.length - 1])
+        onDone(result)
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : "Analysis failed.")
+        }
+      })
+
+    return () => {
+      cancelled = true
+      window.clearInterval(progressTimer)
+    }
+  }, [file, imageName, imageUrl, onDone])
 
   const circumference = 2 * Math.PI * 54
 
@@ -129,7 +148,9 @@ export default function CalculatingPage({
 
             {/* Status */}
             <div className="text-center">
-              <p className="font-semibold text-white text-base">{phase}</p>
+              <p className="font-semibold text-white text-base">
+                {error || phase}
+              </p>
               <p className="text-white/40 text-xs mt-1 font-mono">
                 {imageName}
               </p>
