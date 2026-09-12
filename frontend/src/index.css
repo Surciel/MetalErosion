@@ -28,6 +28,10 @@ body {
   margin: 0;
 }
 
+.recovery-pin {
+  -webkit-text-security: disc;
+}
+
 ::-webkit-scrollbar {
   width: 4px;
 }

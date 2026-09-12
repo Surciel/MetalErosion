@@ -45,7 +45,6 @@ function LoginForm({
       </div>
 
       <input
-        type="text"
         type="email"
         placeholder="Email"
         value={email}
@@ -105,27 +104,54 @@ function SignupForm({
   const [email, setEmail] = useState("")
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
+  const [recoveryPin, setRecoveryPin] = useState("")
   const [retype, setRetype] = useState("")
 
   const fields = [
-    { placeholder: "Email", value: email, onChange: setEmail, type: "email" },
+    {
+      placeholder: "Email",
+      value: email,
+      onChange: setEmail,
+      type: "email",
+      name: "email",
+      autoComplete: "email",
+    },
     {
       placeholder: "Username",
       value: username,
       onChange: setUsername,
       type: "text",
+      name: "username",
+      autoComplete: "username",
+    },
+    {
+      placeholder: "Recovery Pin",
+      value: recoveryPin,
+      onChange: (value: string) =>
+        setRecoveryPin(value.replace(/\D/g, "").slice(0, 6)),
+      type: "text",
+      name: "recoveryPin",
+      autoComplete: "off",
+      inputMode: "numeric" as const,
+      maxLength: 6,
+      pattern: "[0-9]{1,6}",
+      className: "recovery-pin",
     },
     {
       placeholder: "Password",
       value: password,
       onChange: setPassword,
       type: "password",
+      name: "new-password",
+      autoComplete: "new-password",
     },
     {
       placeholder: "Retype password",
       value: retype,
       onChange: setRetype,
       type: "password",
+      name: "confirm-password",
+      autoComplete: "new-password",
     },
   ] as const
 
@@ -133,8 +159,19 @@ function SignupForm({
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        if (username.trim() && email.trim() && password && password === retype) {
-          onSignup({ username: username.trim(), email: email.trim(), password })
+        if (
+          username.trim() &&
+          email.trim() &&
+          password &&
+          recoveryPin &&
+          password === retype
+        ) {
+          onSignup({
+            username: username.trim(),
+            email: email.trim(),
+            password,
+            recoveryPin,
+          })
         }
       }}
       className="flex flex-col gap-3"
@@ -150,10 +187,15 @@ function SignupForm({
         <input
           key={field.placeholder}
           type={field.type}
+          name={field.name}
+          autoComplete={field.autoComplete}
           placeholder={field.placeholder}
           value={field.value}
           onChange={(e) => field.onChange(e.target.value)}
-          className="w-full px-4 py-3 rounded-lg text-sm text-white placeholder-white/40 outline-none transition-all"
+          inputMode={"inputMode" in field ? field.inputMode : undefined}
+          maxLength={"maxLength" in field ? field.maxLength : undefined}
+          pattern={"pattern" in field ? field.pattern : undefined}
+          className={`w-full px-4 py-3 rounded-lg text-sm text-white placeholder-white/40 outline-none transition-all ${"className" in field ? field.className : ""}`}
           style={{ background: "var(--color-btn)" }}
           required
         />

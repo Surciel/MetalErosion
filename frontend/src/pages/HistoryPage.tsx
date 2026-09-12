@@ -8,11 +8,15 @@ import type { ScanResult, View } from "@/types"
 export default function HistoryPage({
   username,
   history,
+  historyError,
+  historyLoading,
   onSelect,
   onNavigate,
 }: {
   username: string
   history: ScanResult[]
+  historyError: string
+  historyLoading: boolean
   onSelect: (s: ScanResult) => void
   onNavigate: (v: View) => void
 }) {
@@ -45,7 +49,15 @@ export default function HistoryPage({
               </p>
             </div>
 
-            {history.length === 0 ? (
+            {historyLoading ? (
+              <div className="py-24 text-center text-sm text-white/50">
+                Loading scan history...
+              </div>
+            ) : historyError ? (
+              <div className="py-24 text-center text-sm text-red-300">
+                {historyError}
+              </div>
+            ) : history.length === 0 ? (
               <div className="flex flex-col items-center justify-center text-center gap-3 py-24">
                 <p className="text-white/30 text-4xl">📋</p>
                 <p className="text-white/50 text-sm">

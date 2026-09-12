@@ -22,6 +22,7 @@ export interface LoginCredentials {
 
 export interface SignupCredentials extends LoginCredentials {
   username: string
+  recoveryPin: string
 }
 
 export interface Account {
@@ -68,4 +69,23 @@ export interface ScanResult {
   date: string
   createdAt?: string
   accountId?: string
+}
+
+export interface AnalysisResponse {
+  status: string
+  filename: string
+  rust_percentage: number
+  astm_grade: number
+  priority_level: string
+  recommendation: string
+  box_coordinates: number[]
+  scan_id: string | number | null
+  image_url?: string | null
+  created_at?: string | null
+  user_id?: string | null
+}
+
+export interface AnalyzeCorrosionOptions {
+  accessToken?: string
+  userId?: string
 }

@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import LandingPage from "@/pages/LandingPage"
 import AuthModal from "@/components/AuthModal"
 import HomePage from "@/pages/HomePage"
@@ -9,6 +9,8 @@ import HistoryPage from "@/pages/HistoryPage"
 import HistoryDetailPage from "@/pages/HistoryDetailPage"
 import AdminPage from "@/pages/AdminPage"
 import { getAdminMetrics } from "@/utils/adminMetrics"
+import { getScanHistory } from "@/services/api"
+import { supabase } from "@/services/supabase"
 import type {
   Account,
   LoginCredentials,
@@ -31,18 +33,146 @@ export default function App() {
   const [uploadedImageName, setUploadedImageName] = useState("")
   const [currentResult, setCurrentResult] = useState<ScanResult | null>(null)
   const [sessionScans, setSessionScans] = useState<ScanResult[]>([])
-  const [history] = useState<ScanResult[]>([])
+  const [history, setHistory] = useState<ScanResult[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState("")
   const [selectedHistoryScan, setSelectedHistoryScan] =
     useState<ScanResult | null>(null)
 
-  const handleLogin = (_credentials: LoginCredentials) => {
-    setAuthError("Supabase authentication is not connected yet.")
-  }
-  const handleSignup = (_credentials: SignupCredentials) => {
-    setAuthError("Supabase authentication is not connected yet.")
+  const accountFromUser = (user: {
+    id: string
+    email?: string
+    created_at: string
+    last_sign_in_at?: string
+    user_metadata: { username?: string }
+    app_metadata: { role?: string }
+  }): Account => {
+    const email = user.email ?? ""
+    const username =
+      user.user_metadata.username?.trim() || email.split("@")[0] || "User"
+    const role: Account["role"] =
+      user.app_metadata.role === "admin" ? "admin" : "user"
+
+    return {
+      id: user.id,
+      username,
+      email,
+      role,
+      status: "active",
+      createdAt: user.created_at,
+      lastActiveAt: user.last_sign_in_at ?? user.created_at,
+    }
   }
 
-  const handleLogout = () => {
+  const loadHistory = async (accessToken: string, userId: string) => {
+    setHistoryLoading(true)
+    setHistoryError("")
+
+    try {
+      setHistory(await getScanHistory(accessToken, userId))
+    } catch (cause: unknown) {
+      setHistoryError(
+        cause instanceof Error ? cause.message : "Unable to load scan history.",
+      )
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    let mounted = true
+
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        if (mounted) setAuthError(error.message)
+        return
+      }
+
+      if (mounted && session?.user) {
+        setActiveAccount(accountFromUser(session.user))
+        void loadHistory(session.access_token, session.user.id)
+        setView("home")
+      }
+    })
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return
+
+      if (session?.user) {
+        setActiveAccount(accountFromUser(session.user))
+        void loadHistory(session.access_token, session.user.id)
+      } else {
+        setActiveAccount(null)
+        setHistory([])
+        setHistoryError("")
+      }
+    })
+
+    return () => {
+      mounted = false
+      subscription.unsubscribe()
+    }
+  }, [])
+
+  const handleLogin = async (credentials: LoginCredentials) => {
+    setAuthError("")
+    const { data, error } = await supabase.auth.signInWithPassword(credentials)
+
+    if (error) {
+      setAuthError(error.message)
+      return
+    }
+
+    if (!data.user) {
+      setAuthError("Login succeeded without an authenticated user.")
+      return
+    }
+
+    setActiveAccount(accountFromUser(data.user))
+    setView("home")
+  }
+
+  const handleSignup = async (credentials: SignupCredentials) => {
+    setAuthError("")
+    const { data, error } = await supabase.auth.signUp({
+      email: credentials.email,
+      password: credentials.password,
+      options: {
+        data: {
+          username: credentials.username,
+          recovery_pin: credentials.recoveryPin,
+        },
+      },
+    })
+
+    if (error) {
+      setAuthError(error.message)
+      return
+    }
+
+    if (!data.user) {
+      setAuthError("Sign up did not return an authenticated user.")
+      return
+    }
+
+    if (!data.session) {
+      setAuthError("Check your email to confirm your account before logging in.")
+      return
+    }
+
+    setActiveAccount(accountFromUser(data.user))
+    setView("home")
+  }
+
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut()
+    if (error) {
+      setAuthError(error.message)
+      return
+    }
+
     setActiveAccount(null)
     setSessionScans([])
     setCurrentResult(null)
@@ -60,6 +190,7 @@ export default function App() {
   const handleCalculationDone = (result: ScanResult) => {
     setCurrentResult(result)
     setSessionScans((prev) => [...prev, result])
+    setHistory((prev) => [result, ...prev.filter((scan) => scan.id !== result.id)])
     setView("results")
   }
 
@@ -83,8 +214,14 @@ export default function App() {
               mode={view}
               onLogin={handleLogin}
               onSignup={handleSignup}
-              onClose={() => setView("landing")}
-              onSwitchMode={setView}
+              onClose={() => {
+                setAuthError("")
+                setView("landing")
+              }}
+              onSwitchMode={(nextView) => {
+                setAuthError("")
+                setView(nextView)
+              }}
             />
           )}
             {authError && (
@@ -172,6 +309,8 @@ export default function App() {
         <HistoryPage
           username={username}
           history={history}
+          historyLoading={historyLoading}
+          historyError={historyError}
           onSelect={handleSelectHistoryScan}
           onNavigate={setView}
         />
