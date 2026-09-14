@@ -8,11 +8,20 @@ import InfoPage from "@/pages/InfoPage"
 import HistoryPage from "@/pages/HistoryPage"
 import HistoryDetailPage from "@/pages/HistoryDetailPage"
 import AdminPage from "@/pages/AdminPage"
-import { getAdminMetrics } from "@/utils/adminMetrics"
-import { getScanHistory } from "@/services/api"
+import type { User } from "@supabase/supabase-js"
+import {
+  getAdminAccounts,
+  getAdminMetrics,
+  getAdminRecoveryRequests,
+  getScanHistory,
+  ApiError,
+  updateAdminAccount,
+  updateAdminRecoveryRequest,
+} from "@/services/api"
 import { supabase } from "@/services/supabase"
 import type {
   Account,
+  AdminMetrics,
   LoginCredentials,
   MetricRange,
   RecoveryRequest,
@@ -24,9 +33,20 @@ import type {
 export default function App() {
   const [view, setView] = useState<View>("landing")
   const [activeAccount, setActiveAccount] = useState<Account | null>(null)
-  const [accounts] = useState<Account[]>([])
-  const [recoveryRequests] = useState<RecoveryRequest[]>([])
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [recoveryRequests, setRecoveryRequests] = useState<RecoveryRequest[]>([])
   const [metricRange, setMetricRange] = useState<MetricRange>("month")
+  const [adminMetrics, setAdminMetrics] = useState<AdminMetrics>({
+    totalAccounts: 0,
+    activeAccounts: 0,
+    scansToday: 0,
+    scansThisWeek: 0,
+    scansThisMonth: 0,
+    selectedRange: "month",
+    selectedRangeScans: 0,
+  })
+  const [adminLoading, setAdminLoading] = useState(false)
+  const [adminError, setAdminError] = useState("")
   const [authError, setAuthError] = useState("")
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [uploadedImageUrl, setUploadedImageUrl] = useState("")
@@ -39,17 +59,12 @@ export default function App() {
   const [selectedHistoryScan, setSelectedHistoryScan] =
     useState<ScanResult | null>(null)
 
-  const accountFromUser = (user: {
-    id: string
-    email?: string
-    created_at: string
-    last_sign_in_at?: string
-    user_metadata: { username?: string }
-    app_metadata: { role?: string }
-  }): Account => {
+  const accountFromUser = (user: User): Account => {
     const email = user.email ?? ""
     const username =
-      user.user_metadata.username?.trim() || email.split("@")[0] || "User"
+      (typeof user.user_metadata.username === "string"
+        ? user.user_metadata.username.trim()
+        : "") || email.split("@")[0] || "User"
     const role: Account["role"] =
       user.app_metadata.role === "admin" ? "admin" : "user"
 
@@ -64,18 +79,59 @@ export default function App() {
     }
   }
 
-  const loadHistory = async (accessToken: string, userId: string) => {
+  const loadHistory = async (accessToken: string) => {
     setHistoryLoading(true)
     setHistoryError("")
 
     try {
-      setHistory(await getScanHistory(accessToken, userId))
+      setHistory(await getScanHistory(accessToken))
     } catch (cause: unknown) {
+      if (cause instanceof ApiError && cause.status === 401) {
+        handleSessionExpired()
+        return
+      }
       setHistoryError(
         cause instanceof Error ? cause.message : "Unable to load scan history.",
       )
     } finally {
       setHistoryLoading(false)
+    }
+  }
+
+  const handleSessionExpired = () => {
+    setActiveAccount(null)
+    setHistory([])
+    setAccounts([])
+    setRecoveryRequests([])
+    setHistoryError("")
+    setAdminError("")
+    setAuthError("Your session has expired. Please log in again.")
+    setView("landing")
+  }
+
+  const loadAdminData = async (accessToken: string, range: MetricRange) => {
+    setAdminLoading(true)
+    setAdminError("")
+
+    try {
+      const [nextAccounts, nextMetrics, nextRecoveryRequests] = await Promise.all([
+        getAdminAccounts(accessToken),
+        getAdminMetrics(accessToken, range),
+        getAdminRecoveryRequests(accessToken),
+      ])
+      setAccounts(nextAccounts)
+      setAdminMetrics(nextMetrics)
+      setRecoveryRequests(nextRecoveryRequests)
+    } catch (cause: unknown) {
+      if (cause instanceof ApiError && cause.status === 401) {
+        handleSessionExpired()
+        return
+      }
+      setAdminError(
+        cause instanceof Error ? cause.message : "Unable to load admin data.",
+      )
+    } finally {
+      setAdminLoading(false)
     }
   }
 
@@ -89,9 +145,13 @@ export default function App() {
       }
 
       if (mounted && session?.user) {
-        setActiveAccount(accountFromUser(session.user))
-        void loadHistory(session.access_token, session.user.id)
-        setView("home")
+        const account = accountFromUser(session.user)
+        setActiveAccount(account)
+        void loadHistory(session.access_token)
+        if (account.role === "admin") {
+          void loadAdminData(session.access_token, metricRange)
+        }
+        setView(account.role === "admin" ? "admin" : "home")
       }
     })
 
@@ -101,12 +161,20 @@ export default function App() {
       if (!mounted) return
 
       if (session?.user) {
-        setActiveAccount(accountFromUser(session.user))
-        void loadHistory(session.access_token, session.user.id)
+        const account = accountFromUser(session.user)
+        setActiveAccount(account)
+        void loadHistory(session.access_token)
+        if (account.role === "admin") {
+          void loadAdminData(session.access_token, metricRange)
+        }
+        setView(account.role === "admin" ? "admin" : "home")
       } else {
         setActiveAccount(null)
         setHistory([])
         setHistoryError("")
+        setAccounts([])
+        setRecoveryRequests([])
+        setAdminError("")
       }
     })
 
@@ -130,8 +198,9 @@ export default function App() {
       return
     }
 
-    setActiveAccount(accountFromUser(data.user))
-    setView("home")
+    const account = accountFromUser(data.user)
+    setActiveAccount(account)
+    setView(account.role === "admin" ? "admin" : "home")
   }
 
   const handleSignup = async (credentials: SignupCredentials) => {
@@ -162,8 +231,9 @@ export default function App() {
       return
     }
 
-    setActiveAccount(accountFromUser(data.user))
-    setView("home")
+    const account = accountFromUser(data.user)
+    setActiveAccount(account)
+    setView(account.role === "admin" ? "admin" : "home")
   }
 
   const handleLogout = async () => {
@@ -177,6 +247,9 @@ export default function App() {
     setSessionScans([])
     setCurrentResult(null)
     setUploadedFile(null)
+    setAccounts([])
+    setRecoveryRequests([])
+    setAdminError("")
     setView("landing")
   }
 
@@ -199,8 +272,83 @@ export default function App() {
     setView("history-detail")
   }
 
+  const handleAdminRangeChange = async (range: MetricRange) => {
+    setMetricRange(range)
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (session?.access_token) {
+      await loadAdminData(session.access_token, range)
+    }
+  }
+
+  const handleAdminAccountUpdate = async (
+    accountId: string,
+    changes: Pick<Account, "username" | "email" | "role">,
+  ) => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session?.access_token) {
+      setAdminError("Your session has expired. Please log in again.")
+      return
+    }
+
+    try {
+      const updatedAccount = await updateAdminAccount(
+        session.access_token,
+        accountId,
+        changes,
+      )
+      setAccounts((current) =>
+        current.map((account) =>
+          account.id === updatedAccount.id ? updatedAccount : account,
+        ),
+      )
+    } catch (cause: unknown) {
+      if (cause instanceof ApiError && cause.status === 401) {
+        handleSessionExpired()
+        return
+      }
+      setAdminError(
+        cause instanceof Error ? cause.message : "Unable to update account.",
+      )
+    }
+  }
+
+  const handleAdminRecovery = async (requestId: string) => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session?.access_token) {
+      setAdminError("Your session has expired. Please log in again.")
+      return
+    }
+
+    try {
+      const updatedRequest = await updateAdminRecoveryRequest(
+        session.access_token,
+        requestId,
+      )
+      setRecoveryRequests((current) =>
+        current.map((request) =>
+          request.id === updatedRequest.id ? updatedRequest : request,
+        ),
+      )
+    } catch (cause: unknown) {
+      if (cause instanceof ApiError && cause.status === 401) {
+        handleSessionExpired()
+        return
+      }
+      setAdminError(
+        cause instanceof Error
+          ? cause.message
+          : "Unable to update recovery request.",
+      )
+    }
+  }
+
   const username = activeAccount?.username ?? "User"
-  const adminMetrics = getAdminMetrics(accounts, history, metricRange)
 
   switch (view) {
     case "landing":
@@ -247,17 +395,18 @@ export default function App() {
           accounts={accounts}
           metrics={adminMetrics}
           recoveryRequests={recoveryRequests}
+          loading={adminLoading}
+          error={adminError}
           onNavigate={setView}
           onLogout={handleLogout}
-          onRangeChange={setMetricRange}
-            onUpdateAccount={() => undefined}
-            onToggleAccount={() => undefined}
-            onHandleRecovery={() => undefined}
+          onRangeChange={handleAdminRangeChange}
+          onUpdateAccount={handleAdminAccountUpdate}
+          onHandleRecovery={handleAdminRecovery}
         />
       ) : (
         <HomePage
           username={username}
-          isAdmin={activeAccount?.role === "admin"}
+          isAdmin={false}
           onUpload={handleUpload}
           onNavigate={setView}
         />
@@ -270,6 +419,7 @@ export default function App() {
           imageName={uploadedImageName}
           file={uploadedFile}
           onDone={handleCalculationDone}
+          onNavigate={setView}
         />
       )
     case "results":

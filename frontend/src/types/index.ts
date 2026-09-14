@@ -13,7 +13,7 @@ export type View =
 
 export type AccountRole = "user" | "admin"
 export type AccountStatus = "active" | "deactivated"
-export type MetricRange = "day" | "week" | "month" | "custom"
+export type MetricRange = "day" | "week" | "month"
 
 export interface LoginCredentials {
   email: string
@@ -87,5 +87,4 @@ export interface AnalysisResponse {
 
 export interface AnalyzeCorrosionOptions {
   accessToken?: string
-  userId?: string
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useEffect, useRef, useState } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import PageGrid from "@/components/PageGrid"
@@ -12,22 +12,40 @@ export default function CalculatingPage({
   imageName,
   file,
   onDone,
+  onNavigate,
 }: {
   username: string
   imageUrl: string
   imageName: string
   file: File | null
   onDone: (result: ScanResult) => void
+  onNavigate: (view: "home" | "landing") => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [progress, setProgress] = useState(10)
   const [error, setError] = useState("")
+  const [retryToken, setRetryToken] = useState(0)
+  const lastRequestKey = useRef("")
+  const onDoneRef = useRef(onDone)
+  onDoneRef.current = onDone
+
+  useEffect(() => {
+    return () => {
+      if (imageUrl.startsWith("blob:")) URL.revokeObjectURL(imageUrl)
+    }
+  }, [imageUrl])
 
   useEffect(() => {
     if (!file) {
       setError("No image was selected for analysis.")
       return
     }
+
+    const requestKey = `${file.name}:${file.size}:${file.lastModified}:${imageUrl}:${retryToken}`
+    if (lastRequestKey.current === requestKey) return
+    lastRequestKey.current = requestKey
+    setError("")
+    setProgress(10)
 
     let cancelled = false
     const runAnalysis = async () => {
@@ -44,7 +62,6 @@ export default function CalculatingPage({
       setProgress(50)
       return analyzeCorrosion(file, imageUrl, {
         accessToken: session.access_token,
-        userId: session.user.id,
       })
     }
 
@@ -52,7 +69,7 @@ export default function CalculatingPage({
       .then((result) => {
         if (cancelled) return
         setProgress(100)
-        onDone(result)
+        onDoneRef.current(result)
       })
       .catch((cause: unknown) => {
         if (!cancelled) {
@@ -63,7 +80,7 @@ export default function CalculatingPage({
     return () => {
       cancelled = true
     }
-  }, [file, imageUrl, onDone])
+  }, [file, imageUrl, retryToken])
 
   const circumference = 2 * Math.PI * 54
 
@@ -80,7 +97,9 @@ export default function CalculatingPage({
       <SideMenu
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
-        onNavigate={() => {}}
+        onNavigate={(view) => {
+          if (view === "home" || view === "landing") onNavigate(view)
+        }}
       />
 
       <main className="flex-1 flex items-center py-16 px-4">
@@ -157,6 +176,27 @@ export default function CalculatingPage({
                 {imageName}
               </p>
             </div>
+
+            {error && (
+              <div className="flex flex-wrap justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setRetryToken((token) => token + 1)}
+                  className="px-4 py-2 rounded-lg text-sm font-medium text-white"
+                  style={{ background: "var(--color-accent)" }}
+                >
+                  Retry analysis
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onNavigate("home")}
+                  className="px-4 py-2 rounded-lg text-sm text-white/70 hover:text-white"
+                  style={{ background: "var(--color-btn)" }}
+                >
+                  Choose another image
+                </button>
+              </div>
+            )}
 
             {/* Progress bar */}
             <div

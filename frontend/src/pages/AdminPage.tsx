@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import type {
@@ -37,17 +37,20 @@ export default function AdminPage({
   accounts,
   metrics,
   recoveryRequests,
+  loading,
+  error,
   onNavigate,
   onLogout,
   onRangeChange,
   onUpdateAccount,
-  onToggleAccount,
   onHandleRecovery,
 }: {
   username: string
   accounts: Account[]
   metrics: AdminMetrics
   recoveryRequests: RecoveryRequest[]
+  loading: boolean
+  error: string
   onNavigate: (view: View) => void
   onLogout: () => void
   onRangeChange: (range: MetricRange) => void
@@ -55,13 +58,16 @@ export default function AdminPage({
     accountId: string,
     changes: Pick<Account, "username" | "email" | "role">,
   ) => void
-  onToggleAccount: (accountId: string) => void
   onHandleRecovery: (requestId: string) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [range, setRange] = useState<MetricRange>(metrics.selectedRange)
   const [editingAccount, setEditingAccount] = useState<Account | null>(null)
   const [draft, setDraft] = useState({ username: "", email: "", role: "user" as Account["role"] })
+
+  useEffect(() => {
+    setRange(metrics.selectedRange)
+  }, [metrics.selectedRange])
 
   const pendingRequests = useMemo(
     () => recoveryRequests.filter((request) => request.status === "pending"),
@@ -104,6 +110,8 @@ export default function AdminPage({
           <p className="text-xs uppercase tracking-[0.2em] text-white/40">Administration</p>
           <h1 className="text-2xl font-bold text-white">Operations overview</h1>
           <p className="text-sm text-white/50">Manage accounts, monitor scan activity, and respond to recovery requests.</p>
+          {loading && <p className="text-xs text-white/45">Refreshing administrative data...</p>}
+          {error && <p className="text-sm text-red-300 mt-2">{error}</p>}
         </div>
 
         <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-7">
@@ -198,7 +206,13 @@ export default function AdminPage({
                 </tr>
               </thead>
               <tbody>
-                {accounts.map((account) => (
+                {accounts.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-10 text-center text-sm text-white/40">
+                      No accounts found.
+                    </td>
+                  </tr>
+                ) : accounts.map((account) => (
                   <tr key={account.id} className="border-t border-white/10 text-sm">
                     <td className="px-5 py-4">
                       <p className="font-medium text-white">{account.username}</p>
@@ -210,7 +224,6 @@ export default function AdminPage({
                     <td className="px-5 py-4">
                       <div className="flex justify-end gap-2">
                         <button onClick={() => beginEdit(account)} className="px-3 py-1.5 rounded-lg text-xs text-white/70 hover:text-white transition-colors" style={{ background: "var(--color-btn)" }}>Edit</button>
-                        <button onClick={() => onToggleAccount(account.id)} disabled={account.id === "admin-1"} className="px-3 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed" style={{ color: account.status === "active" ? "#e7b27f" : "#8bd49a", background: "var(--color-btn)" }}>{account.status === "active" ? "Deactivate" : "Restore"}</button>
                       </div>
                     </td>
                   </tr>

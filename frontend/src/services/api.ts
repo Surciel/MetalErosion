@@ -1,10 +1,24 @@
 import type {
+  Account,
+  AdminMetrics,
   AnalyzeCorrosionOptions,
   AnalysisResponse,
+  MetricRange,
+  RecoveryRequest,
   ScanResult,
 } from "@/types"
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000"
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message)
+    this.name = "ApiError"
+  }
+}
 
 async function parseErrorMessage(response: Response): Promise<string> {
   const body = await response.text()
@@ -29,16 +43,39 @@ async function parseErrorMessage(response: Response): Promise<string> {
   return body
 }
 
+async function throwApiError(response: Response): Promise<never> {
+  throw new ApiError(await parseErrorMessage(response), response.status)
+}
+
+async function requestJson<T>(
+  path: string,
+  accessToken: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(init.headers ?? {}),
+    },
+  })
+
+  if (!response.ok) {
+    await throwApiError(response)
+  }
+
+  return (await response.json()) as T
+}
+
 function mapAnalysisResponse(
   data: AnalysisResponse,
-  imageUrl = data.image_url ?? "",
-  userId = data.user_id ?? undefined,
+  previewImageUrl = "",
 ): ScanResult {
   const createdAt = data.created_at ?? new Date().toISOString()
 
   return {
     id: String(data.scan_id ?? createdAt),
-    imageUrl,
+    imageUrl: data.image_url ?? previewImageUrl,
     imageName: data.filename,
     rustPercent: data.rust_percentage,
     astmGrade: data.astm_grade,
@@ -52,7 +89,7 @@ function mapAnalysisResponse(
       year: "numeric",
     }),
     createdAt,
-    accountId: userId,
+    accountId: data.user_id ?? undefined,
   }
 }
 
@@ -77,7 +114,6 @@ export async function analyzeCorrosion(
 ): Promise<ScanResult> {
   const formData = new FormData()
   formData.append("file", file)
-  if (options.userId) formData.append("user_id", options.userId)
 
   const headers: HeadersInit = {}
   if (options.accessToken) {
@@ -91,17 +127,14 @@ export async function analyzeCorrosion(
   })
 
   if (!response.ok) {
-    throw new Error(await parseErrorMessage(response))
+    await throwApiError(response)
   }
 
   const data = (await response.json()) as AnalysisResponse
-  return mapAnalysisResponse(data, imageUrl, options.userId)
+  return mapAnalysisResponse(data, imageUrl)
 }
 
-export async function getScanHistory(
-  accessToken: string,
-  userId?: string,
-): Promise<ScanResult[]> {
+export async function getScanHistory(accessToken: string): Promise<ScanResult[]> {
   const response = await fetch(`${API_BASE_URL}/history`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -109,7 +142,7 @@ export async function getScanHistory(
   })
 
   if (!response.ok) {
-    throw new Error(await parseErrorMessage(response))
+    await throwApiError(response)
   }
 
   const payload: unknown = await response.json()
@@ -132,11 +165,136 @@ export async function getScanHistory(
       if (!isAnalysisResponse(record)) {
         throw new Error("The history response contained an invalid scan.")
       }
-      return mapAnalysisResponse(record, undefined, userId)
+      return mapAnalysisResponse(record)
     })
     .sort((left, right) => {
       const leftTime = left.createdAt ? Date.parse(left.createdAt) : 0
       const rightTime = right.createdAt ? Date.parse(right.createdAt) : 0
       return rightTime - leftTime
     })
+}
+
+type AdminAccountResponse = {
+  id: string
+  username: string
+  email: string
+  role: "user" | "admin"
+  status?: "active" | "deactivated"
+  created_at: string
+  last_active_at?: string | null
+}
+
+type AdminMetricsResponse = {
+  total_accounts: number
+  active_accounts: number
+  scans_today: number
+  scans_this_week: number
+  scans_this_month: number
+}
+
+type RecoveryResponse = {
+  id: string
+  user_id: string
+  status: "verified" | "completed" | "failed"
+  requested_at: string
+}
+
+function mapAdminAccount(account: AdminAccountResponse): Account {
+  return {
+    id: account.id,
+    username: account.username,
+    email: account.email,
+    role: account.role,
+    status: account.status ?? "active",
+    createdAt: account.created_at,
+    lastActiveAt: account.last_active_at ?? account.created_at,
+  }
+}
+
+function mapRecoveryRequest(request: RecoveryResponse): RecoveryRequest {
+  return {
+    id: request.id,
+    accountId: request.user_id,
+    username: request.user_id,
+    email: "",
+    requestedAt: request.requested_at,
+    status: request.status === "verified" ? "pending" : "handled",
+  }
+}
+
+export async function getAdminAccounts(accessToken: string): Promise<Account[]> {
+  const accounts = await requestJson<AdminAccountResponse[]>(
+    "/admin/accounts",
+    accessToken,
+  )
+  return accounts.map(mapAdminAccount)
+}
+
+export async function updateAdminAccount(
+  accessToken: string,
+  accountId: string,
+  changes: Pick<Account, "username" | "email" | "role">,
+): Promise<Account> {
+  const account = await requestJson<AdminAccountResponse>(
+    `/admin/accounts/${encodeURIComponent(accountId)}`,
+    accessToken,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(changes),
+    },
+  )
+  return mapAdminAccount(account)
+}
+
+export async function getAdminMetrics(
+  accessToken: string,
+  selectedRange: MetricRange,
+): Promise<AdminMetrics> {
+  const metrics = await requestJson<AdminMetricsResponse>(
+    "/admin/metrics",
+    accessToken,
+  )
+  const selectedRangeScans =
+    selectedRange === "day"
+      ? metrics.scans_today
+      : selectedRange === "week"
+        ? metrics.scans_this_week
+        : metrics.scans_this_month
+
+  return {
+    totalAccounts: metrics.total_accounts,
+    activeAccounts: metrics.active_accounts,
+    scansToday: metrics.scans_today,
+    scansThisWeek: metrics.scans_this_week,
+    scansThisMonth: metrics.scans_this_month,
+    selectedRange,
+    selectedRangeScans,
+  }
+}
+
+export async function getAdminRecoveryRequests(
+  accessToken: string,
+): Promise<RecoveryRequest[]> {
+  const requests = await requestJson<RecoveryResponse[]>(
+    "/admin/recovery-requests",
+    accessToken,
+  )
+  return requests.map(mapRecoveryRequest)
+}
+
+export async function updateAdminRecoveryRequest(
+  accessToken: string,
+  requestId: string,
+): Promise<RecoveryRequest> {
+  const request = await requestJson<RecoveryResponse>(
+    `/admin/recovery-requests/${encodeURIComponent(requestId)}`,
+    accessToken,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "completed" }),
+    },
+  )
+  return mapRecoveryRequest(request)
 }
