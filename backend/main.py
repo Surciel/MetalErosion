@@ -2,12 +2,15 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import cv2
 import numpy as np
 import uvicorn
 from dotenv import load_dotenv
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Query
+from datetime import datetime, timedelta
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi import Depends, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
@@ -23,8 +26,6 @@ load_dotenv(BASE_DIR / ".env", override=True)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "scans")
-STORAGE_URL_TTL = int(os.getenv("SUPABASE_SIGNED_URL_TTL", "3600"))
 configured_model_path = Path(os.getenv("MODEL_PATH", "models/best.pt"))
 MODEL_PATH = str(
     configured_model_path
@@ -137,8 +138,9 @@ def _scan_response(
     recommendation: str,
     box_coordinates: list[int],
     user_id: Optional[str] = None,
+    signed_url: Optional[str] = None,
 ) -> dict[str, Any]:
-    return {
+    response = {
         "status": "success",
         "filename": filename,
         "image_url": image_url,
@@ -151,6 +153,9 @@ def _scan_response(
         "created_at": created_at,
         "user_id": user_id,
     }
+    if signed_url is not None:
+        response["signed_url"] = signed_url
+    return response
 
 
 def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
@@ -172,20 +177,7 @@ def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _upload_image(user_id: str, filename: str, contents: bytes, content_type: str) -> str:
-    suffix = Path(filename).suffix.lower() or ".jpg"
-    object_path = f"{user_id}/{uuid4()}{suffix}"
-    options = {"content-type": content_type, "upsert": "false"}
-    supabase.storage.from_(STORAGE_BUCKET).upload(object_path, contents, options)
-
-    if os.getenv("SUPABASE_STORAGE_PRIVATE", "false").lower() == "true":
-        signed = supabase.storage.from_(STORAGE_BUCKET).create_signed_url(
-            object_path, STORAGE_URL_TTL
-        )
-        return signed["signedURL"]
-    return supabase.storage.from_(STORAGE_BUCKET).get_public_url(object_path)
-
-
+@app.post("/analyze-asset")
 @app.post("/analyze-corrosion")
 async def analyze_corrosion(
     file: UploadFile = File(...),
@@ -233,17 +225,24 @@ async def analyze_corrosion(
     )
     flat_boxes = boxes.flatten().tolist()
     report = prediction_engine.analyze_scan(rust_percentage, asset_category)
-    image_url = _upload_image(
-        user["id"], file.filename or "image.jpg", contents, file.content_type
+    filename = file.filename or "image.jpg"
+    storage_path = f"scans/{user['id']}/{filename}"
+    storage = supabase.storage.from_("metal-scans")
+    storage.upload(
+        storage_path,
+        contents,
+        {"content-type": file.content_type, "upsert": "false"},
     )
+    signed_url = storage.create_signed_url(storage_path, 259200)["signedURL"]
 
-    payload = {
+    supabase_payload = {
         "user_id": user["id"],
-        "image_url": image_url,
+        "image_url": signed_url,
+        "storage_path": storage_path,
         "rust_percentage": rust_percentage,
         "box_coordinates": flat_boxes,
     }
-    inserted = supabase.table("scans").insert(payload).execute()
+    inserted = supabase.table("scans").insert(supabase_payload).execute()
     if not inserted.data:
         raise HTTPException(status_code=502, detail="The scan could not be persisted.")
 
@@ -251,16 +250,54 @@ async def analyze_corrosion(
     return _scan_response(
         scan_id=scan["id"],
         created_at=scan.get("created_at"),
-        filename=file.filename or "image.jpg",
-        image_url=image_url,
+        filename=filename,
+        image_url=signed_url,
         rust_percentage=rust_percentage,
         astm_grade=report["astm_grade"],
         priority_level=report["priority_tier"],
         recommendation=report["remediation_protocol"],
         box_coordinates=flat_boxes,
         user_id=user["id"],
+        signed_url=signed_url,
     )
 
+@app.get("/admin/recovery-requests")
+async def get_recovery_requests():
+    """
+    Fetches all password reset logs and joins them with the profiles table
+    to return a flat JSON structure with username and email for the admin dashboard.
+    """
+    try:
+        # 1. Query the logs and join the profiles table via the user_id foreign key
+        response = supabase.table("password_reset_logs").select(
+            "id, user_id, status, requested_at, profiles(username, email)"
+        ).order("requested_at", desc=True).execute()
+
+        raw_logs = response.data
+        
+        # 2. Flatten the response to match the frontend expectations perfectly
+        formatted_logs = []
+        for log in raw_logs:
+            profile = log.get("profiles") or {}
+            
+            # Unify 'verified' and 'pending' statuses for the frontend
+            current_status = log.get("status")
+            if current_status == "verified":
+                current_status = "pending"
+                
+            formatted_logs.append({
+                "id": log.get("id"),
+                "user_id": log.get("user_id"),
+                "username": profile.get("username", "Unknown"),
+                "email": profile.get("email", "Unknown"),
+                "status": current_status,
+                "requested_at": log.get("requested_at")
+            })
+            
+        return formatted_logs
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/history")
 def history(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
@@ -366,11 +403,21 @@ def admin_metrics(_admin: dict[str, Any] = Depends(admin_user)) -> dict[str, int
 def recovery_requests(_admin: dict[str, Any] = Depends(admin_user)) -> list[dict[str, Any]]:
     response = (
         supabase.table("password_reset_logs")
-        .select("id,user_id,status,requested_at")
+        .select("id, user_id, status, requested_at, profiles(username, email)")
         .order("requested_at", desc=True)
         .execute()
     )
-    return response.data or []
+    return [
+        {
+            "id": log["id"],
+            "user_id": log["user_id"],
+            "username": (log.get("profiles") or {}).get("username"),
+            "email": (log.get("profiles") or {}).get("email"),
+            "status": log["status"],
+            "requested_at": log["requested_at"],
+        }
+        for log in (response.data or [])
+    ]
 
 
 @app.patch("/admin/recovery-requests/{request_id}")
@@ -392,3 +439,86 @@ def update_recovery_request(
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+@app.get("/me")
+async def get_current_user(request: Request):
+    """
+    Authoritative endpoint to verify the user token and return their true database role.
+    """
+    # 1. Extract the security token sent by the frontend
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+    
+    token = auth_header.replace("Bearer ", "")
+    
+    try:
+        # 2. Securely verify the token and derive the true user ID
+        auth_response = supabase.auth.get_user(token)
+        user_id = auth_response.user.id
+        
+        # 3. Read the authoritative role directly from the profiles table
+        profile_response = supabase.table("profiles").select("*").eq("id", user_id).single().execute()
+        profile_data = profile_response.data
+        
+        if not profile_data:
+            raise HTTPException(status_code=404, detail="Profile not found")
+            
+        # 4. Return the exact JSON structure required by the frontend
+        return {
+            "id": profile_data.get("id"),
+            "email": profile_data.get("email"),
+            "username": profile_data.get("username"),
+            "role": profile_data.get("role"),
+            "created_at": profile_data.get("created_at")
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Authentication failed: {str(e)}")
+
+@app.get("/admin/metrics")
+async def get_admin_metrics(range: str = Query("month")):
+    """
+    Calculates administrative metrics server-side.
+    Accepts a 'range' query parameter (day, week, month).
+    """
+    try:
+        # 1. Total and Active Accounts
+        # Since we skipped the optional "Account Status" column, all accounts are considered active.
+        profiles_res = supabase.table("profiles").select("id", count="exact").execute()
+        total_accounts = profiles_res.count if profiles_res.count is not None else 0
+        
+        # 2. Establish Timeframes (UTC)
+        now = datetime.utcnow()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        week_start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        
+        # 3. Query Scan Counts
+        scans_today_res = supabase.table("scans").select("id", count="exact").gte("created_at", today_start).execute()
+        scans_week_res = supabase.table("scans").select("id", count="exact").gte("created_at", week_start).execute()
+        scans_month_res = supabase.table("scans").select("id", count="exact").gte("created_at", month_start).execute()
+        
+        scans_today = scans_today_res.count if scans_today_res.count is not None else 0
+        scans_this_week = scans_week_res.count if scans_week_res.count is not None else 0
+        scans_this_month = scans_month_res.count if scans_month_res.count is not None else 0
+        
+        # 4. Filter Selected Range
+        selected_range_scans = scans_this_month
+        if range == "day":
+            selected_range_scans = scans_today
+        elif range == "week":
+            selected_range_scans = scans_this_week
+
+        # 5. Return the exact JSON structure required by the frontend documentation
+        return {
+            "total_accounts": total_accounts,
+            "active_accounts": total_accounts, 
+            "scans_today": scans_today,
+            "scans_this_week": scans_this_week,
+            "scans_this_month": scans_this_month,
+            "selected_range_scans": selected_range_scans
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
