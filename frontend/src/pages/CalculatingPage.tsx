@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
-import PageGrid from "@/components/PageGrid"
-import { analyzeCorrosion } from "@/services/api"
+import { AnalysisRequestError, ApiError, analyzeCorrosion } from "@/services/api"
 import { supabase } from "@/services/supabase"
-import type { ScanResult } from "@/types"
+import type { AnalysisErrorInfo, AnalysisPhase, ScanResult } from "@/types"
 
 export default function CalculatingPage({
   username,
@@ -13,6 +12,7 @@ export default function CalculatingPage({
   file,
   onDone,
   onNavigate,
+  onSessionExpired,
 }: {
   username: string
   imageUrl: string
@@ -20,14 +20,17 @@ export default function CalculatingPage({
   file: File | null
   onDone: (result: ScanResult) => void
   onNavigate: (view: "home" | "landing") => void
+  onSessionExpired: () => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const [progress, setProgress] = useState(10)
-  const [error, setError] = useState("")
+  const [phase, setPhase] = useState<AnalysisPhase>("checking-session")
+  const [error, setError] = useState<AnalysisErrorInfo | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [retryToken, setRetryToken] = useState(0)
-  const lastRequestKey = useRef("")
   const onDoneRef = useRef(onDone)
+  const onSessionExpiredRef = useRef(onSessionExpired)
   onDoneRef.current = onDone
+  onSessionExpiredRef.current = onSessionExpired
 
   useEffect(() => {
     return () => {
@@ -37,58 +40,116 @@ export default function CalculatingPage({
 
   useEffect(() => {
     if (!file) {
-      setError("No image was selected for analysis.")
+      setError({
+        kind: "invalid-image",
+        message: "No image was selected for analysis.",
+        retryable: false,
+      })
       return
     }
 
-    const requestKey = `${file.name}:${file.size}:${file.lastModified}:${imageUrl}:${retryToken}`
-    if (lastRequestKey.current === requestKey) return
-    lastRequestKey.current = requestKey
-    setError("")
-    setProgress(10)
+    setError(null)
+    setPhase("checking-session")
+    setElapsedSeconds(0)
 
     let cancelled = false
+    const controller = new AbortController()
+    const startedAt = Date.now()
+    const elapsedTimer = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000))
+    }, 1000)
     const runAnalysis = async () => {
       const {
         data: { session },
         error: sessionError,
       } = await supabase.auth.getSession()
 
-      if (sessionError) throw sessionError
+      if (sessionError) {
+        throw new AnalysisRequestError(
+          "session-expired",
+          "Your session could not be verified. Please log in again.",
+          false,
+        )
+      }
       if (!session?.access_token || !session.user) {
-        throw new Error("Your session has expired. Please log in again.")
+        throw new AnalysisRequestError(
+          "session-expired",
+          "Your session has expired. Please log in again.",
+          false,
+        )
       }
 
-      setProgress(50)
+      setPhase("processing")
       return analyzeCorrosion(file, imageUrl, {
         accessToken: session.access_token,
+        signal: controller.signal,
       })
     }
 
     runAnalysis()
       .then((result) => {
         if (cancelled) return
-        setProgress(100)
+        setPhase("complete")
         onDoneRef.current(result)
       })
       .catch((cause: unknown) => {
         if (!cancelled) {
-          setError(cause instanceof Error ? cause.message : "Analysis failed.")
+          setPhase("failed")
+          if (cause instanceof AnalysisRequestError) {
+            if (cause.kind === "session-expired") onSessionExpiredRef.current()
+            setError({
+              kind: cause.kind,
+              message: cause.message,
+              retryable: cause.retryable,
+            })
+            return
+          }
+          if (cause instanceof ApiError && cause.status === 401) {
+            onSessionExpiredRef.current()
+            setError({
+              kind: "session-expired",
+              message: "Your session has expired. Please log in again.",
+              retryable: false,
+            })
+            return
+          }
+          setError({
+            kind: "unknown",
+            message: cause instanceof Error ? cause.message : "Analysis failed.",
+            retryable: true,
+          })
         }
       })
 
     return () => {
       cancelled = true
+      controller.abort()
+      window.clearInterval(elapsedTimer)
     }
   }, [file, imageUrl, retryToken])
 
-  const circumference = 2 * Math.PI * 54
+  const isActive = phase === "checking-session" || phase === "processing"
+  const phaseLabel =
+    phase === "checking-session"
+      ? "Checking your session..."
+      : phase === "processing"
+        ? "Analyzing corrosion and saving the result..."
+        : phase === "complete"
+          ? "Scan complete"
+          : "Analysis failed"
+  const phaseDetail =
+    phase === "checking-session"
+      ? "Preparing a secure request"
+      : phase === "processing"
+        ? elapsedSeconds > 15
+          ? "The model is still working. This can take a little longer for large images."
+          : "Running the corrosion model and storing your scan"
+        : phase === "complete"
+          ? "Opening your results"
+          : "Review the error below and retry when ready"
 
   return (
-    <div
-      className="min-h-screen flex flex-col"
-      style={{ background: "var(--color-bg)" }}
-    >
+    <div className="min-h-screen flex flex-col" style={{ background: "var(--color-bg)" }}>
       <Header
         username={username}
         onMenuToggle={() => setMenuOpen((o) => !o)}
@@ -102,131 +163,41 @@ export default function CalculatingPage({
         }}
       />
 
-      <main className="flex-1 flex items-center py-16 px-4">
-        <PageGrid>
-          {/* cols 4–9: 6-column centered content */}
-          <div
-            className="flex flex-col items-center gap-8"
-            style={{ gridColumn: "4 / 10" }}
-          >
-            {/* Circular progress */}
-            <svg width="140" height="140" viewBox="0 0 140 140">
-              <circle
-                cx="70"
-                cy="70"
-                r="54"
-                fill="none"
-                stroke="rgba(255,255,255,0.1)"
-                strokeWidth="8"
-              />
-              <circle
-                cx="70"
-                cy="70"
-                r="54"
-                fill="none"
-                stroke="#c0392b"
-                strokeWidth="8"
-                strokeLinecap="round"
-                strokeDasharray={circumference}
-                strokeDashoffset={circumference * (1 - progress / 100)}
-                transform="rotate(-90 70 70)"
-                style={{ transition: "stroke-dashoffset 0.3s ease" }}
-              />
-              <text
-                x="70"
-                y="66"
-                textAnchor="middle"
-                fontSize="22"
-                fontWeight="700"
-                fill="#f0ede8"
-                fontFamily="Outfit"
-              >
-                {Math.round(progress)}%
-              </text>
-              <text
-                x="70"
-                y="82"
-                textAnchor="middle"
-                fontSize="10"
-                fill="rgba(240,237,232,0.5)"
-                fontFamily="Outfit"
-              >
-                analyzed
-              </text>
-            </svg>
-
-            {/* Image preview */}
-            <div
-              className="w-40 h-28 rounded-xl overflow-hidden"
-              style={{ background: "var(--color-card)" }}
-            >
-              <img
-                src={imageUrl}
-                alt={imageName}
-                className="w-full h-full object-cover"
-              />
+      <main className="flex-1 flex items-center justify-center px-6 py-16">
+        <div className="w-full max-w-xl text-center">
+          {error ? (
+            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border-2 border-red-300/70 bg-red-300/10 text-4xl font-light text-red-200" aria-label="Analysis failed">
+              ×
             </div>
-
-            {/* Status */}
-            <div className="text-center">
-              <p className="font-semibold text-white text-base">
-                {error || "Analyzing image..."}
-              </p>
-              <p className="text-white/40 text-xs mt-1 font-mono">
-                {imageName}
-              </p>
+          ) : (
+            <div className="analysis-spinner mx-auto h-16 w-16 rounded-full border-4 border-white/15 border-t-red-300" aria-label="Analysis in progress" />
+          )}
+          <p className="mt-8 text-xs font-mono uppercase tracking-[0.2em] text-white/40">
+            {error ? "Analysis failed" : phase === "complete" ? "Scan complete" : "Please wait"}
+          </p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">
+            {error ? "We couldn't finish this scan." : phase === "complete" ? "Opening your results..." : "Analyzing your image..."}
+          </h1>
+          <p className="mx-auto mt-4 max-w-md text-sm leading-6 text-white/55">
+            {error?.message || phaseDetail}
+          </p>
+          <p className="mt-4 truncate text-xs text-white/35" title={imageName}>
+            {imageName}
+          </p>
+          {isActive && (
+            <p className="mt-2 text-xs text-white/30">Elapsed {elapsedSeconds}s</p>
+          )}
+          {error && (
+            <div className="mt-8 flex flex-wrap justify-center gap-3">
+              <button type="button" onClick={() => setRetryToken((token) => token + 1)} disabled={!error.retryable} className="rounded-lg bg-[var(--color-accent)] px-5 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">
+                Retry analysis
+              </button>
+              <button type="button" onClick={() => onNavigate("home")} className="rounded-lg border border-white/15 px-5 py-2.5 text-sm text-white/70 hover:text-white">
+                Scan another image
+              </button>
             </div>
-
-            {error && (
-              <div className="flex flex-wrap justify-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setRetryToken((token) => token + 1)}
-                  className="px-4 py-2 rounded-lg text-sm font-medium text-white"
-                  style={{ background: "var(--color-accent)" }}
-                >
-                  Retry analysis
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onNavigate("home")}
-                  className="px-4 py-2 rounded-lg text-sm text-white/70 hover:text-white"
-                  style={{ background: "var(--color-btn)" }}
-                >
-                  Choose another image
-                </button>
-              </div>
-            )}
-
-            {/* Progress bar */}
-            <div
-              className="w-full rounded-full overflow-hidden h-1.5"
-              style={{ background: "rgba(255,255,255,0.1)" }}
-            >
-              <div
-                className="h-full rounded-full transition-all duration-300"
-                style={{ width: `${progress}%`, background: "#c0392b" }}
-              />
-            </div>
-
-            {/* Skeleton cards */}
-            <div className="w-full grid grid-cols-2 gap-5 opacity-40">
-              {["Rust Percentage", "Classification"].map((label) => (
-                <div
-                  key={label}
-                  className="rounded-xl p-4 text-center"
-                  style={{ background: "var(--color-card)" }}
-                >
-                  <p className="text-xs text-white/50 mb-2">{label}</p>
-                  <div
-                    className="h-6 rounded-md animate-pulse"
-                    style={{ background: "var(--color-btn)" }}
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        </PageGrid>
+          )}
+        </div>
       </main>
     </div>
   )

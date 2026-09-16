@@ -1,4 +1,4 @@
-import { useState, useRef } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import PageGrid from "@/components/PageGrid"
@@ -27,16 +27,59 @@ export default function ResultsPage({
   sessionScans,
   onNavigate,
   onClose,
+  onUpload,
 }: {
   username: string
   result: ScanResult
   sessionScans: ScanResult[]
   onNavigate: (v: View) => void
   onClose: () => void
+  onUpload: (file: File, url: string) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [displayed, setDisplayed] = useState<ScanResult>(result)
+  const [dragging, setDragging] = useState(false)
   const carouselRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const dragDepth = useRef(0)
+
+  useEffect(() => {
+    setDisplayed(result)
+  }, [result])
+
+  const processFile = useCallback(
+    (file: File) => {
+      if (!file.type.startsWith("image/")) return
+      onUpload(file, URL.createObjectURL(file))
+    },
+    [onUpload],
+  )
+
+  const handleDrop = useCallback(
+    (event: React.DragEvent) => {
+      event.preventDefault()
+      dragDepth.current = 0
+      setDragging(false)
+      const file = event.dataTransfer.files[0]
+      if (file) processFile(file)
+    },
+    [processFile],
+  )
+
+  const handleDragEnter = (event: React.DragEvent) => {
+    event.preventDefault()
+    dragDepth.current += 1
+    setDragging(true)
+  }
+
+  const handleDragLeave = (event: React.DragEvent) => {
+    event.preventDefault()
+    dragDepth.current -= 1
+    if (dragDepth.current <= 0) {
+      dragDepth.current = 0
+      setDragging(false)
+    }
+  }
 
   const color = severityColor(displayed.rustPercent)
 
@@ -52,6 +95,10 @@ export default function ResultsPage({
     <div
       className="min-h-screen flex flex-col"
       style={{ background: "var(--color-bg)" }}
+      onDragEnter={handleDragEnter}
+      onDragOver={(event) => event.preventDefault()}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
       <Header
         username={username}
@@ -62,6 +109,27 @@ export default function ResultsPage({
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
         onNavigate={onNavigate}
+      />
+
+      {dragging && (
+        <div className="pointer-events-none fixed inset-4 z-50 flex items-center justify-center rounded-2xl border-2 border-dashed border-red-300 bg-black/45 text-center backdrop-blur-sm">
+          <div>
+            <p className="text-lg font-semibold text-white">Drop image to scan again</p>
+            <p className="mt-1 text-sm text-white/60">Release anywhere on the page</p>
+          </div>
+        </div>
+      )}
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0]
+          event.target.value = ""
+          if (file) processFile(file)
+        }}
       />
 
       <div className="flex-1 overflow-y-auto">
@@ -323,14 +391,31 @@ export default function ResultsPage({
               </p>
             </div>
 
-            {/* Return button */}
+            {/* Intentional navigation */}
             <div
               style={{ gridColumn: "1 / -1" }}
-              className="flex justify-center pt-2"
+              className="flex flex-wrap justify-center gap-3 pt-2"
             >
               <button
+                onClick={() => inputRef.current?.click()}
+                className="px-6 py-3 rounded-xl font-semibold text-white text-sm"
+                style={{ background: "var(--color-accent)" }}
+              >
+                Add another image
+              </button>
+              <button
+                onClick={() => onNavigate("history")}
+                className="px-6 py-3 rounded-xl font-semibold text-white/70 hover:text-white transition-all text-sm border"
+                style={{
+                  borderColor: "rgba(255,255,255,0.15)",
+                  background: "transparent",
+                }}
+              >
+                View scan history
+              </button>
+              <button
                 onClick={onClose}
-                className="px-8 py-3 rounded-xl font-semibold text-white/60 hover:text-white transition-all text-sm border"
+                className="px-6 py-3 rounded-xl font-semibold text-white/60 hover:text-white transition-all text-sm border"
                 style={{
                   borderColor: "rgba(255,255,255,0.15)",
                   background: "transparent",
@@ -342,7 +427,7 @@ export default function ResultsPage({
                   (e.currentTarget.style.background = "transparent")
                 }
               >
-                ← Return to Home
+                Return to Home
               </button>
             </div>
           </PageGrid>

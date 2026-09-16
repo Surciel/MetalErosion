@@ -3,6 +3,7 @@ import type {
   AdminMetrics,
   AnalyzeCorrosionOptions,
   AnalysisResponse,
+  AnalysisErrorKind,
   MetricRange,
   RecoveryRequest,
   ScanResult,
@@ -17,6 +18,17 @@ export class ApiError extends Error {
   ) {
     super(message)
     this.name = "ApiError"
+  }
+}
+
+export class AnalysisRequestError extends Error {
+  constructor(
+    readonly kind: AnalysisErrorKind,
+    message: string,
+    readonly retryable: boolean,
+  ) {
+    super(message)
+    this.name = "AnalysisRequestError"
   }
 }
 
@@ -112,6 +124,16 @@ export async function analyzeCorrosion(
   imageUrl: string,
   options: AnalyzeCorrosionOptions = {},
 ): Promise<ScanResult> {
+  const controller = new AbortController()
+  const timeout = setTimeout(
+    () => controller.abort(),
+    options.timeoutMs ?? 120_000,
+  )
+  const signal = options.signal
+  const abortRequest = () => controller.abort()
+
+  signal?.addEventListener("abort", abortRequest, { once: true })
+
   const formData = new FormData()
   formData.append("file", file)
 
@@ -120,18 +142,72 @@ export async function analyzeCorrosion(
     headers.Authorization = `Bearer ${options.accessToken}`
   }
 
-  const response = await fetch(`${API_BASE_URL}/analyze-corrosion`, {
-    method: "POST",
-    headers,
-    body: formData,
-  })
+  try {
+    const response = await fetch(`${API_BASE_URL}/analyze-corrosion`, {
+      method: "POST",
+      headers,
+      body: formData,
+      signal: controller.signal,
+    })
 
-  if (!response.ok) {
-    await throwApiError(response)
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new AnalysisRequestError(
+          "session-expired",
+          "Your session has expired. Please log in again.",
+          false,
+        )
+      }
+      if (response.status === 400) {
+        throw new AnalysisRequestError(
+          "invalid-image",
+          await parseErrorMessage(response),
+          false,
+        )
+      }
+      if (response.status >= 500) {
+        throw new AnalysisRequestError(
+          "server-failure",
+          "The analysis service could not finish this scan.",
+          true,
+        )
+      }
+      await throwApiError(response)
+    }
+
+    const payload: unknown = await response.json()
+    if (!isAnalysisResponse(payload)) {
+      throw new AnalysisRequestError(
+        "server-failure",
+        "The analysis service returned an invalid result. Please retry the scan.",
+        true,
+      )
+    }
+    const data = payload
+    return mapAnalysisResponse(data, imageUrl)
+  } catch (cause: unknown) {
+    if (cause instanceof AnalysisRequestError || cause instanceof ApiError) {
+      throw cause
+    }
+    if (cause instanceof DOMException && cause.name === "AbortError") {
+      if (signal?.aborted) {
+        throw new AnalysisRequestError("cancelled", "Analysis cancelled.", true)
+      }
+      throw new AnalysisRequestError(
+        "request-timeout",
+        "The analysis is taking too long. You can retry the scan.",
+        true,
+      )
+    }
+    throw new AnalysisRequestError(
+      "network-unavailable",
+      "The analysis service is unavailable. Check that the backend is running and retry.",
+      true,
+    )
+  } finally {
+    clearTimeout(timeout)
+    signal?.removeEventListener("abort", abortRequest)
   }
-
-  const data = (await response.json()) as AnalysisResponse
-  return mapAnalysisResponse(data, imageUrl)
 }
 
 export async function getScanHistory(accessToken: string): Promise<ScanResult[]> {
@@ -174,6 +250,25 @@ export async function getScanHistory(accessToken: string): Promise<ScanResult[]>
     })
 }
 
+export async function deleteScanHistory(
+  accessToken: string,
+  scanId: string,
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/history/${encodeURIComponent(scanId)}`,
+    {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  )
+
+  if (!response.ok) {
+    await throwApiError(response)
+  }
+}
+
 type AdminAccountResponse = {
   id: string
   username: string
@@ -195,6 +290,8 @@ type AdminMetricsResponse = {
 type RecoveryResponse = {
   id: string
   user_id: string
+  username: string | null
+  email: string | null
   status: "verified" | "completed" | "failed"
   requested_at: string
 }
@@ -215,8 +312,8 @@ function mapRecoveryRequest(request: RecoveryResponse): RecoveryRequest {
   return {
     id: request.id,
     accountId: request.user_id,
-    username: request.user_id,
-    email: "",
+    username: request.username ?? "Unknown",
+    email: request.email ?? "Unknown",
     requestedAt: request.requested_at,
     status: request.status === "verified" ? "pending" : "handled",
   }
@@ -252,7 +349,7 @@ export async function getAdminMetrics(
   selectedRange: MetricRange,
 ): Promise<AdminMetrics> {
   const metrics = await requestJson<AdminMetricsResponse>(
-    "/admin/metrics",
+    `/admin/metrics?range=${selectedRange}`,
     accessToken,
   )
   const selectedRangeScans =

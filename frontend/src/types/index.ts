@@ -14,6 +14,20 @@ export type View =
 export type AccountRole = "user" | "admin"
 export type AccountStatus = "active" | "deactivated"
 export type MetricRange = "day" | "week" | "month"
+export type AnalysisPhase =
+  | "checking-session"
+  | "processing"
+  | "complete"
+  | "failed"
+
+export type AnalysisErrorKind =
+  | "session-expired"
+  | "invalid-image"
+  | "request-timeout"
+  | "network-unavailable"
+  | "server-failure"
+  | "cancelled"
+  | "unknown"
 
 export interface LoginCredentials {
   email: string
@@ -87,4 +101,12 @@ export interface AnalysisResponse {
 
 export interface AnalyzeCorrosionOptions {
   accessToken?: string
+  signal?: AbortSignal
+  timeoutMs?: number
+}
+
+export interface AnalysisErrorInfo {
+  kind: AnalysisErrorKind
+  message: string
+  retryable: boolean
 }

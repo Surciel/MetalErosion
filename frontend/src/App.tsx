@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import LandingPage from "@/pages/LandingPage"
 import AuthModal from "@/components/AuthModal"
 import HomePage from "@/pages/HomePage"
@@ -14,6 +14,7 @@ import {
   getAdminMetrics,
   getAdminRecoveryRequests,
   getScanHistory,
+  deleteScanHistory,
   ApiError,
   updateAdminAccount,
   updateAdminRecoveryRequest,
@@ -32,6 +33,8 @@ import type {
 
 export default function App() {
   const [view, setView] = useState<View>("landing")
+  const viewRef = useRef<View>("landing")
+  viewRef.current = view
   const [activeAccount, setActiveAccount] = useState<Account | null>(null)
   const [accounts, setAccounts] = useState<Account[]>([])
   const [recoveryRequests, setRecoveryRequests] = useState<RecoveryRequest[]>([])
@@ -151,32 +154,33 @@ export default function App() {
         if (account.role === "admin") {
           void loadAdminData(session.access_token, metricRange)
         }
-        setView(account.role === "admin" ? "admin" : "home")
+        if (["landing", "login", "signup"].includes(viewRef.current)) {
+          setView(account.role === "admin" ? "admin" : "home")
+        }
       }
     })
 
     const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!mounted) return
+          data: { subscription },
+        } = supabase.auth.onAuthStateChange((_event, session) => {
+          if (!mounted) return
 
-      if (session?.user) {
-        const account = accountFromUser(session.user)
-        setActiveAccount(account)
-        void loadHistory(session.access_token)
-        if (account.role === "admin") {
-          void loadAdminData(session.access_token, metricRange)
-        }
-        setView(account.role === "admin" ? "admin" : "home")
-      } else {
-        setActiveAccount(null)
-        setHistory([])
-        setHistoryError("")
-        setAccounts([])
-        setRecoveryRequests([])
-        setAdminError("")
-      }
-    })
+          if (session?.user) {
+            const account = accountFromUser(session.user)
+            setActiveAccount(account)
+            void loadHistory(session.access_token)
+            if (account.role === "admin") {
+              void loadAdminData(session.access_token, metricRange)
+            }
+          } else if (_event === "SIGNED_OUT") {
+            setActiveAccount(null)
+            setHistory([])
+            setHistoryError("")
+            setAccounts([])
+            setRecoveryRequests([])
+            setAdminError("")
+          }
+        })
 
     return () => {
       mounted = false
@@ -260,16 +264,50 @@ export default function App() {
     setView("calculating")
   }
 
-  const handleCalculationDone = (result: ScanResult) => {
+    const handleCalculationDone = (result: ScanResult) => {
     setCurrentResult(result)
     setSessionScans((prev) => [...prev, result])
     setHistory((prev) => [result, ...prev.filter((scan) => scan.id !== result.id)])
-    setView("results")
+    setSelectedHistoryScan(result)
+      setView("results")
   }
 
   const handleSelectHistoryScan = (scan: ScanResult) => {
     setSelectedHistoryScan(scan)
     setView("history-detail")
+  }
+
+  const handleDeleteHistoryScan = async (scanId: string) => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session?.access_token) {
+      handleSessionExpired()
+      return
+    }
+
+    try {
+      await deleteScanHistory(session.access_token, scanId)
+      const remainingHistory = history.filter((scan) => scan.id !== scanId)
+      setHistory(remainingHistory)
+      setSessionScans((current) => current.filter((scan) => scan.id !== scanId))
+
+      const nextScan = remainingHistory[0] ?? null
+      setSelectedHistoryScan(nextScan)
+      setCurrentResult((current) => (current?.id === scanId ? nextScan : current))
+      setView(nextScan ? "history-detail" : "history")
+    } catch (cause: unknown) {
+      if (cause instanceof ApiError && cause.status === 401) {
+        handleSessionExpired()
+        return
+      }
+      setHistoryError(
+        cause instanceof Error ? cause.message : "Unable to delete scan history.",
+      )
+      throw cause instanceof Error
+        ? cause
+        : new Error("Unable to delete scan history.")
+    }
   }
 
   const handleAdminRangeChange = async (range: MetricRange) => {
@@ -420,6 +458,7 @@ export default function App() {
           file={uploadedFile}
           onDone={handleCalculationDone}
           onNavigate={setView}
+          onSessionExpired={handleSessionExpired}
         />
       )
     case "results":
@@ -430,6 +469,7 @@ export default function App() {
           sessionScans={sessionScans}
           onNavigate={setView}
           onClose={() => setView("home")}
+          onUpload={handleUpload}
         />
       ) : null
     case "rust-info":
@@ -473,6 +513,7 @@ export default function App() {
           history={history}
           onBack={() => setView("history")}
           onNavigate={setView}
+          onDelete={handleDeleteHistoryScan}
         />
       ) : null
     default:

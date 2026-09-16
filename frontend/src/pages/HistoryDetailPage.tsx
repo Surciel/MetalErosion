@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import { severityColor } from "@/utils/severity"
@@ -10,17 +10,44 @@ export default function HistoryDetailPage({
   history,
   onBack,
   onNavigate,
+  onDelete,
 }: {
   username: string
   scan: ScanResult
   history: ScanResult[]
   onBack: () => void
   onNavigate: (v: View) => void
+  onDelete: (scanId: string) => Promise<void>
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [displayed, setDisplayed] = useState<ScanResult>(scan)
+  const [deletePending, setDeletePending] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
   const safeHistory = history ?? []
   const color = severityColor(displayed.rustPercent)
+
+  useEffect(() => {
+    setDisplayed(scan)
+    setDeleteError("")
+  }, [scan])
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Delete the scan history for ${displayed.imageName}?`)) {
+      return
+    }
+
+    setDeletePending(true)
+    setDeleteError("")
+    try {
+      await onDelete(displayed.id)
+    } catch (cause: unknown) {
+      setDeleteError(
+        cause instanceof Error ? cause.message : "Unable to delete this scan.",
+      )
+    } finally {
+      setDeletePending(false)
+    }
+  }
 
   return (
     <div
@@ -267,7 +294,22 @@ export default function HistoryDetailPage({
               </div>
 
               {/* Back button */}
-              <div className="flex justify-center pt-2">
+              <div className="flex flex-col items-center gap-3 pt-2">
+                {deleteError && (
+                  <p className="text-sm text-red-300">{deleteError}</p>
+                )}
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deletePending}
+                  className="px-8 py-3 rounded-xl font-semibold text-red-200 hover:text-white transition-all text-sm border disabled:opacity-50"
+                  style={{
+                    borderColor: "rgba(192,57,43,0.55)",
+                    background: "rgba(192,57,43,0.12)",
+                  }}
+                >
+                  {deletePending ? "Deleting..." : "Delete this history"}
+                </button>
                 <button
                   onClick={onBack}
                   className="px-8 py-3 rounded-xl font-semibold text-white/60 hover:text-white transition-all text-sm border"

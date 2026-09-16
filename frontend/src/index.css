@@ -1,5 +1,61 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 @import 'tailwindcss';
+@keyframes analysis-progress {
+  from {
+    opacity: 0.55;
+    transform: translateX(-2%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(2%);
+  }
+}
+
+@keyframes analysis-progress-indicator {
+  from {
+    opacity: 0.65;
+    transform: translateX(-12%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(8%);
+  }
+}
+
+@keyframes analysis-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes analysis-spinner {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.analysis-spinner {
+  animation: analysis-spinner 1s linear infinite;
+}
+
+.analysis-progress-indicator {
+  animation: analysis-progress-indicator 1.2s ease-in-out infinite alternate;
+}
+
+.analysis-orbit {
+  animation: analysis-orbit 2.8s linear infinite;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .analysis-progress-indicator,
+  .analysis-orbit,
+  .analysis-spinner {
+    animation: none;
+  }
+}
 
 @theme {
   --color-bg: #3b4a2d;
