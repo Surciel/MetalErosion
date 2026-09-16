@@ -51,7 +51,6 @@ Never expose `.env` values, access tokens, or service-role credentials.
 | `role` | TEXT | Default `user`; allowed values: `user`, `admin` |
 | `email` | TEXT | Required and unique; matches auth email |
 | `username` | TEXT | Required and unique; case-insensitive lookup recommended |
-| `recovery_pin` | CHAR(6) | Required; six digits only |
 | `created_at` | TIMESTAMPTZ | Default `NOW()` |
 
 ### `scans`

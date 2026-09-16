@@ -1,9 +1,4 @@
-import { useRef, useState } from "react"
-import type {
-  ChangeEvent,
-  ClipboardEvent,
-  KeyboardEvent,
-} from "react"
+import { useState } from "react"
 import type { LoginCredentials, SignupCredentials, View } from "@/types"
 
 function Logo() {
@@ -27,13 +22,58 @@ function Logo() {
 
 function LoginForm({
   onLogin,
+  onForgotPassword,
   onSwitch,
 }: {
   onLogin: (credentials: LoginCredentials) => void
+  onForgotPassword: (email: string) => void
   onSwitch: () => void
 }) {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [forgotMode, setForgotMode] = useState(false)
+
+  if (forgotMode) {
+    return (
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (email.trim()) onForgotPassword(email.trim())
+        }}
+        className="flex flex-col gap-3"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex flex-col items-center pb-4">
+          <Logo />
+          <h2 className="text-xl font-bold text-white">Recover account</h2>
+          <p className="text-xs text-white/50 mt-1 text-center">Enter your email and we&apos;ll send a password reset link.</p>
+        </div>
+        <input
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          className="w-full px-4 py-3 rounded-lg text-sm text-white placeholder-white/40 outline-none transition-all"
+          style={{ background: "var(--color-btn)" }}
+          required
+        />
+        <button
+          type="submit"
+          className="w-full py-3 rounded-lg font-semibold text-white transition-all text-sm mt-1"
+          style={{ background: "var(--color-btn)" }}
+        >
+          Send reset link
+        </button>
+        <button
+          type="button"
+          onClick={() => setForgotMode(false)}
+          className="text-xs text-white/55 hover:text-white transition-colors"
+        >
+          Back to login
+        </button>
+      </form>
+    )
+  }
 
   return (
     <form
@@ -68,6 +108,7 @@ function LoginForm({
       />
       <button
         type="button"
+        onClick={() => setForgotMode(true)}
         className="text-xs text-white/40 hover:text-white/70 text-left transition-colors"
       >
         Forgot Password?
@@ -99,23 +140,79 @@ function LoginForm({
   )
 }
 
+function ResetPasswordForm({
+  onResetPassword,
+}: {
+  onResetPassword: (password: string) => void
+}) {
+  const [password, setPassword] = useState("")
+  const [confirmation, setConfirmation] = useState("")
+  const [error, setError] = useState("")
+
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault()
+        if (password !== confirmation) {
+          setError("Passwords do not match.")
+          return
+        }
+        setError("")
+        if (password) onResetPassword(password)
+      }}
+      className="flex flex-col gap-3"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="flex flex-col items-center pb-4">
+        <Logo />
+        <h2 className="text-xl font-bold text-white">Set a new password</h2>
+        <p className="text-xs text-white/50 mt-1 text-center">Choose a new password for your account.</p>
+      </div>
+      <input
+        type="password"
+        placeholder="New password"
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+        className="w-full px-4 py-3 rounded-lg text-sm text-white placeholder-white/40 outline-none transition-all"
+        style={{ background: "var(--color-btn)" }}
+        minLength={6}
+        required
+      />
+      <input
+        type="password"
+        placeholder="Confirm new password"
+        value={confirmation}
+        onChange={(event) => setConfirmation(event.target.value)}
+        className="w-full px-4 py-3 rounded-lg text-sm text-white placeholder-white/40 outline-none transition-all"
+        style={{ background: "var(--color-btn)" }}
+        minLength={6}
+        required
+      />
+      {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
+      <button
+        type="submit"
+        className="w-full py-3 rounded-lg font-semibold text-white transition-all text-sm mt-1"
+        style={{ background: "var(--color-btn)" }}
+      >
+        Update password
+      </button>
+    </form>
+  )
+}
+
 function SignupForm({
   onSignup,
+  onResendConfirmation,
   onSwitch,
 }: {
   onSignup: (credentials: SignupCredentials) => void
+  onResendConfirmation: (email: string) => void
   onSwitch: () => void
 }) {
-  const PIN_LENGTH = 6
   const [email, setEmail] = useState("")
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
-  const [pinDigits, setPinDigits] = useState<string[]>(() =>
-    Array.from({ length: PIN_LENGTH }, () => ""),
-  )
-  const [pinError, setPinError] = useState("")
   const [retype, setRetype] = useState("")
-  const pinRefs = useRef<Array<HTMLInputElement | null>>([])
 
   const fields = [
     {
@@ -152,88 +249,10 @@ function SignupForm({
     },
   ] as const
 
-  const handlePinChange = (
-    index: number,
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    const digits = event.currentTarget.value.replace(/\D/g, "")
-    if (!digits) {
-      setPinDigits((current) => {
-        const next = [...current]
-        next[index] = ""
-        return next
-      })
-      return
-    }
-
-    setPinDigits((current) => {
-      const next = [...current]
-      next[index] = digits[0]
-      return next
-    })
-    setPinError("")
-    pinRefs.current[index + 1]?.focus()
-  }
-
-  const handlePinKeyDown = (
-    index: number,
-    event: KeyboardEvent<HTMLInputElement>,
-  ) => {
-    if (event.key === "Backspace" && !pinDigits[index] && index > 0) {
-      event.preventDefault()
-      setPinDigits((current) => {
-        const next = [...current]
-        next[index - 1] = ""
-        return next
-      })
-      pinRefs.current[index - 1]?.focus()
-    }
-
-    if (event.key === "ArrowLeft" && index > 0) {
-      event.preventDefault()
-      pinRefs.current[index - 1]?.focus()
-    }
-
-    if (event.key === "ArrowRight" && index < PIN_LENGTH - 1) {
-      event.preventDefault()
-      pinRefs.current[index + 1]?.focus()
-    }
-  }
-
-  const handlePinPaste = (
-    index: number,
-    event: ClipboardEvent<HTMLInputElement>,
-  ) => {
-    event.preventDefault()
-    const pastedDigits = event.clipboardData
-      .getData("text")
-      .replace(/\D/g, "")
-      .slice(0, PIN_LENGTH - index)
-
-    if (!pastedDigits) return
-
-    setPinDigits((current) => {
-      const next = [...current]
-      pastedDigits.split("").forEach((digit, offset) => {
-        next[index + offset] = digit
-      })
-      return next
-    })
-    setPinError("")
-    pinRefs.current[Math.min(index + pastedDigits.length, PIN_LENGTH - 1)]?.focus()
-  }
-
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        const recoveryPin = pinDigits.join("")
-        if (recoveryPin.length !== PIN_LENGTH) {
-          setPinError("Enter all 6 digits of your recovery PIN.")
-          pinRefs.current[pinDigits.findIndex((digit) => !digit)]?.focus()
-          return
-        }
-
         if (
           username.trim() &&
           email.trim() &&
@@ -244,7 +263,6 @@ function SignupForm({
             username: username.trim(),
             email: email.trim(),
             password,
-            recoveryPin,
           })
         }
       }}
@@ -274,41 +292,6 @@ function SignupForm({
           required
         />
       ))}
-      <div className="flex flex-col gap-2" role="group" aria-labelledby="recovery-pin-label">
-        <span id="recovery-pin-label" className="text-xs text-white/55">
-          Recovery PIN
-        </span>
-        <div className="flex justify-between gap-2">
-          {pinDigits.map((digit, index) => (
-            <input
-              key={index}
-              ref={(element) => {
-                pinRefs.current[index] = element
-              }}
-              type="text"
-              inputMode="numeric"
-              autoComplete={index === 0 ? "one-time-code" : "off"}
-              maxLength={1}
-              pattern="[0-9]"
-              value={digit}
-              aria-label={`Recovery PIN digit ${index + 1}`}
-              aria-invalid={Boolean(pinError)}
-              aria-describedby={pinError ? "recovery-pin-error" : undefined}
-              onChange={(event) => handlePinChange(index, event)}
-              onKeyDown={(event) => handlePinKeyDown(index, event)}
-              onPaste={(event) => handlePinPaste(index, event)}
-              className="w-10 h-12 rounded-lg text-center text-lg font-semibold text-white outline-none border border-white/10"
-              style={{ background: "var(--color-btn)" }}
-              required
-            />
-          ))}
-        </div>
-        {pinError && (
-          <p id="recovery-pin-error" role="alert" className="text-xs text-red-300">
-            {pinError}
-          </p>
-        )}
-      </div>
       <button
         type="submit"
         className="w-full py-3 rounded-lg font-semibold text-white transition-all text-sm mt-1"
@@ -321,6 +304,14 @@ function SignupForm({
         }
       >
         Confirm
+      </button>
+      <button
+        type="button"
+        onClick={() => onResendConfirmation(email.trim())}
+        className="text-xs text-white/45 hover:text-white/75 transition-colors disabled:opacity-30"
+        disabled={!email.trim()}
+      >
+        Resend confirmation email
       </button>
       <p className="text-xs text-center text-white/40">
         Already have an account?{" "}
@@ -339,15 +330,21 @@ function SignupForm({
 export default function AuthModal({
   mode,
   onLogin,
+  onForgotPassword,
+  onResetPassword,
   onSignup,
   onClose,
   onSwitchMode,
+  onResendConfirmation,
 }: {
-  mode: "login" | "signup"
+  mode: "login" | "signup" | "reset-password"
   onLogin: (credentials: LoginCredentials) => void
   onSignup: (credentials: SignupCredentials) => void
+  onForgotPassword: (email: string) => void
+  onResetPassword: (password: string) => void
   onClose: () => void
   onSwitchMode: (m: View) => void
+  onResendConfirmation: (email: string) => void
 }) {
   return (
     <div
@@ -363,13 +360,17 @@ export default function AuthModal({
         {mode === "login" ? (
           <LoginForm
             onLogin={onLogin}
+            onForgotPassword={onForgotPassword}
             onSwitch={() => onSwitchMode("signup")}
           />
-        ) : (
+        ) : mode === "signup" ? (
           <SignupForm
             onSignup={onSignup}
+            onResendConfirmation={onResendConfirmation}
             onSwitch={() => onSwitchMode("login")}
           />
+        ) : (
+          <ResetPasswordForm onResetPassword={onResetPassword} />
         )}
       </div>
     </div>

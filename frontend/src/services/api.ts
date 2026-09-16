@@ -250,6 +250,11 @@ export async function getScanHistory(accessToken: string): Promise<ScanResult[]>
     })
 }
 
+export async function getCurrentAccount(accessToken: string): Promise<Account> {
+  const account = await requestJson<AdminAccountResponse>("/me", accessToken)
+  return mapAdminAccount(account)
+}
+
 export async function deleteScanHistory(
   accessToken: string,
   scanId: string,

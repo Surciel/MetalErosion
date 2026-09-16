@@ -13,6 +13,7 @@ import {
   getAdminAccounts,
   getAdminMetrics,
   getAdminRecoveryRequests,
+  getCurrentAccount,
   getScanHistory,
   deleteScanHistory,
   ApiError,
@@ -82,6 +83,17 @@ export default function App() {
     }
   }
 
+  const accountForSession = async (
+    user: User,
+    accessToken: string,
+  ): Promise<Account> => {
+    try {
+      return await getCurrentAccount(accessToken)
+    } catch {
+      return accountFromUser(user)
+    }
+  }
+
   const loadHistory = async (accessToken: string) => {
     setHistoryLoading(true)
     setHistoryError("")
@@ -141,20 +153,20 @@ export default function App() {
   useEffect(() => {
     let mounted = true
 
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
+    supabase.auth.getSession().then(async ({ data: { session }, error }) => {
       if (error) {
         if (mounted) setAuthError(error.message)
         return
       }
 
       if (mounted && session?.user) {
-        const account = accountFromUser(session.user)
+        const account = await accountForSession(session.user, session.access_token)
         setActiveAccount(account)
         void loadHistory(session.access_token)
         if (account.role === "admin") {
           void loadAdminData(session.access_token, metricRange)
         }
-        if (["landing", "login", "signup"].includes(viewRef.current)) {
+        if (["landing", "login", "signup", "reset-password"].includes(viewRef.current)) {
           setView(account.role === "admin" ? "admin" : "home")
         }
       }
@@ -162,11 +174,17 @@ export default function App() {
 
     const {
           data: { subscription },
-        } = supabase.auth.onAuthStateChange((_event, session) => {
+        } = supabase.auth.onAuthStateChange(async (_event, session) => {
           if (!mounted) return
 
+          if (_event === "PASSWORD_RECOVERY") {
+            setAuthError("")
+            setView("reset-password")
+            return
+          }
+
           if (session?.user) {
-            const account = accountFromUser(session.user)
+            const account = await accountForSession(session.user, session.access_token)
             setActiveAccount(account)
             void loadHistory(session.access_token)
             if (account.role === "admin") {
@@ -202,9 +220,53 @@ export default function App() {
       return
     }
 
-    const account = accountFromUser(data.user)
+    const account = await accountForSession(data.user, data.session?.access_token ?? "")
     setActiveAccount(account)
     setView(account.role === "admin" ? "admin" : "home")
+  }
+
+  const handleForgotPassword = async (email: string) => {
+    setAuthError("")
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    })
+
+    if (error) {
+      setAuthError(error.message)
+      return
+    }
+
+    setAuthError("Check your email for a password reset link.")
+  }
+
+  const handleResendConfirmation = async (email: string) => {
+    if (!email) {
+      setAuthError("Enter your email address first.")
+      return
+    }
+
+    setAuthError("")
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email,
+    })
+
+    setAuthError(error?.message ?? "A new confirmation email has been sent.")
+  }
+
+  const handleResetPassword = async (password: string) => {
+    setAuthError("")
+    const { error } = await supabase.auth.updateUser({ password })
+
+    if (error) {
+      setAuthError(error.message)
+      return
+    }
+
+    await supabase.auth.signOut()
+    setActiveAccount(null)
+    setView("login")
+    setAuthError("Your password was updated. You can now log in.")
   }
 
   const handleSignup = async (credentials: SignupCredentials) => {
@@ -215,7 +277,6 @@ export default function App() {
       options: {
         data: {
           username: credentials.username,
-          recovery_pin: credentials.recoveryPin,
         },
       },
     })
@@ -235,7 +296,7 @@ export default function App() {
       return
     }
 
-    const account = accountFromUser(data.user)
+    const account = await accountForSession(data.user, data.session.access_token)
     setActiveAccount(account)
     setView(account.role === "admin" ? "admin" : "home")
   }
@@ -392,14 +453,18 @@ export default function App() {
     case "landing":
     case "login":
     case "signup":
+    case "reset-password":
       return (
         <>
           <LandingPage onNavigate={setView} />
-          {(view === "login" || view === "signup") && (
+          {(view === "login" || view === "signup" || view === "reset-password") && (
             <AuthModal
               mode={view}
               onLogin={handleLogin}
               onSignup={handleSignup}
+              onForgotPassword={handleForgotPassword}
+              onResendConfirmation={handleResendConfirmation}
+              onResetPassword={handleResetPassword}
               onClose={() => {
                 setAuthError("")
                 setView("landing")

@@ -28,7 +28,9 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env", override=True)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
+SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "metal-scans")
+SUPABASE_SIGNED_URL_TTL = int(os.getenv("SUPABASE_SIGNED_URL_TTL", "3600"))
 configured_model_path = Path(os.getenv("MODEL_PATH", "models/best.pt"))
 MODEL_PATH = str(
     configured_model_path
@@ -239,13 +241,13 @@ async def analyze_corrosion(
     filename = file.filename or "image.jpg"
     storage_path = f"scans/{user['id']}/{filename}"
     try:
-        storage = supabase.storage.from_("metal-scans")
+        storage = supabase.storage.from_(SUPABASE_STORAGE_BUCKET)
         storage.upload(
             storage_path,
             contents,
             {"content-type": file.content_type, "upsert": "false"},
         )
-        signed_url = storage.create_signed_url(storage_path, 259200)["signedURL"]
+        signed_url = storage.create_signed_url(storage_path, SUPABASE_SIGNED_URL_TTL)["signedURL"]
     except Exception as exc:
         logger.exception("Scan image storage failed")
         raise HTTPException(
@@ -298,6 +300,20 @@ def history(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]
     return [_history_scan_response(scan) for scan in (response.data or [])]
 
 
+@app.get("/me")
+def current_account(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    profile = _profile(user["id"])
+    return {
+        "id": user["id"],
+        "username": profile.get("username") or (user.get("email") or "User").split("@")[0],
+        "email": profile.get("email") or user.get("email") or "",
+        "role": profile.get("role", "user"),
+        "status": "active",
+        "created_at": profile.get("created_at") or "",
+        "last_active_at": profile.get("created_at") or "",
+    }
+
+
 @app.delete("/history/{scan_id}")
 def delete_history_scan(
     scan_id: UUID,
@@ -318,7 +334,7 @@ def delete_history_scan(
     storage_path = scan.get("storage_path")
     try:
         if storage_path:
-            supabase.storage.from_("metal-scans").remove([storage_path])
+            supabase.storage.from_(SUPABASE_STORAGE_BUCKET).remove([storage_path])
         supabase.table("scans").delete().eq("id", str(scan_id)).eq(
             "user_id", user["id"]
         ).execute()
@@ -463,14 +479,6 @@ def update_recovery_request(
     if not response.data:
         raise HTTPException(status_code=404, detail="Recovery request not found.")
     return response.data[0]
-
-
-@app.get("/me")
-def get_current_user(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
-    profile = _profile(user["id"])
-    if not profile:
-        raise HTTPException(status_code=404, detail="Profile not found.")
-    return profile
 
 
 if __name__ == "__main__":

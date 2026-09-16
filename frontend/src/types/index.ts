@@ -2,6 +2,7 @@ export type View =
   | "landing"
   | "login"
   | "signup"
+  | "reset-password"
   | "home"
   | "calculating"
   | "results"
@@ -36,7 +37,6 @@ export interface LoginCredentials {
 
 export interface SignupCredentials extends LoginCredentials {
   username: string
-  recoveryPin: string
 }
 
 export interface Account {

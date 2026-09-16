@@ -4,33 +4,23 @@
 
 This document records the remaining database, Supabase Storage, and backend contract questions for the backend team. Frontend work will continue separately and should not invent database behavior while these items are being reviewed.
 
-## Confirmed Signup Constraint: Recovery PIN
+## Supabase Auth recovery standardization
 
-The `profiles.recovery_pin` column is defined as `CHAR(6)` and must contain exactly six digits. A three-digit PIN causes signup to fail when the profile row is created, producing a database error such as `Database error saving new user`.
+The application now uses Supabase Auth email confirmation and password reset links. The six-digit recovery PIN has been removed from the frontend signup contract and is no longer sent in signup metadata.
 
-The frontend now matches this database rule by using six separate one-digit inputs with:
+Before testing new account creation, update the external Supabase schema and profile trigger:
 
-- Automatic focus advance.
-- Backspace and arrow-key navigation.
-- Paste support for a six-digit value.
-- Inline validation before calling Supabase.
-- Preservation of leading zeroes by keeping the PIN as a string.
+1. Stop requiring `profiles.recovery_pin` in the profile creation trigger.
+2. Confirm the trigger creates the profile using the Auth user ID, email, and submitted username.
+3. Test signup, email confirmation, and password reset.
+4. Drop the unused column after those tests pass:
 
-No database migration is required for this fix. Users must enter a value matching:
-
-```text
-^[0-9]{6}$
+```sql
+alter table public.profiles
+drop column if exists recovery_pin;
 ```
 
-If the team wants to support three-digit PINs instead, the database constraint, security expectations, frontend validation, and any recovery workflow must be changed together. Six digits remains the current recommended rule.
-
-### Signup verification checklist
-
-- [ ] A signup with a six-digit PIN creates both the Auth user and the matching `profiles` row.
-- [ ] A signup with a three-digit PIN is rejected by the frontend before the request is sent.
-- [ ] Leading-zero PINs such as `001234` are accepted and stored as six characters.
-- [ ] The Auth user/profile creation trigger, if used, handles `username` and `recovery_pin` correctly.
-- [ ] Duplicate email and duplicate username errors are returned clearly to the frontend.
+Do not run this SQL until the trigger no longer references the column.
 
 ## Priority 1: Storage URL Design
 
