@@ -12,6 +12,8 @@ export default function HistoryPage({
   historyLoading,
   onSelect,
   onNavigate,
+  onDelete,
+  onEdit,
 }: {
   username: string
   history: ScanResult[]
@@ -19,7 +21,7 @@ export default function HistoryPage({
   historyLoading: boolean
   onSelect: (s: ScanResult) => void
   onNavigate: (v: View) => void
-  onDelete: (scanId: string) => Promise<void>
+  onDelete: (scanId: string, stayOnHistory?: boolean) => Promise<void>
   onEdit: (scanId: string, title: string) => Promise<void>
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -105,7 +107,7 @@ export default function HistoryPage({
     setPendingAction(scan.id)
     setActionError("")
     try {
-      await onDelete(scan.id)
+      await onDelete(scan.id, true)
     } catch (cause: unknown) {
       setActionError(cause instanceof Error ? cause.message : "Unable to delete this scan.")
     } finally {
@@ -247,28 +249,34 @@ export default function HistoryPage({
                           onSelect(scan)
                         }
                       }}
-                      className="w-full flex gap-4 rounded-2xl overflow-hidden text-left transition-all hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-white/40"
+                      className="h-[86px] w-full flex gap-4 rounded-2xl overflow-hidden text-left transition-all hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-white/40"
                       style={{ background: "var(--color-card)" }}
                     >
                       <div
-                        className="w-28 min-h-20 self-stretch flex-shrink-0 overflow-hidden"
+                        className="h-[86px] w-28 flex-shrink-0 overflow-hidden"
                         style={{ background: "var(--color-btn)" }}
                       >
                         <img
                           src={scan.imageUrl}
                           alt={scan.imageName}
-                          className="w-full h-full min-h-20 object-cover"
+                          className="h-full w-full object-cover"
                         />
                       </div>
-                      <div className="flex-1 min-w-0 py-3 pr-5 flex flex-col gap-3 sm:flex-row sm:items-center">
+                      <div className="flex min-w-0 flex-1 items-center gap-4 overflow-hidden pr-5">
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-white truncate">
+                          <p className="truncate text-sm font-semibold text-white">
                             {editingId === scan.id ? (
                               <input
                                 value={editingTitle}
                                 onChange={(event) => setEditingTitle(event.target.value)}
                                 onClick={(event) => event.stopPropagation()}
-                                onKeyDown={(event) => { if (event.key === "Enter") void saveEdit(scan) }}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault()
+                                    event.stopPropagation()
+                                    void saveEdit(scan)
+                                  }
+                                }}
                                 maxLength={120}
                                 autoFocus
                                 className="w-full rounded border bg-transparent px-2 py-1 text-sm text-white outline-none"
@@ -279,7 +287,7 @@ export default function HistoryPage({
                           <p className="text-xs text-white/40 mt-0.5">
                             {scan.date}
                           </p>
-                          <div className="mt-2 flex gap-2">
+                          <div className="mt-1.5 flex gap-2">
                             {editingId === scan.id ? (
                               <>
                                 <button onClick={(event) => { event.stopPropagation(); void saveEdit(scan) }} disabled={pendingAction === scan.id} className="text-xs text-green-300 hover:text-green-200">Save</button>
@@ -291,21 +299,21 @@ export default function HistoryPage({
                             <button onClick={(event) => { event.stopPropagation(); void removeScan(scan) }} disabled={pendingAction === scan.id} className="text-xs text-red-300 hover:text-red-200">Delete</button>
                           </div>
                         </div>
-                        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-white/10 pt-3 sm:w-[230px] sm:flex-shrink-0 sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
-                          <div className="min-w-[62px]">
-                            <p className="h-4 text-[10px] leading-4 uppercase tracking-wider text-white/35">Corrosion</p>
-                            <p className="h-5 text-base leading-5 font-bold font-mono" style={{ color }}>
+                        <div className="grid w-[250px] flex-shrink-0 grid-cols-[72px_72px_1fr] items-center gap-x-3 gap-y-1 border-l border-white/10 pl-4">
+                          <div>
+                            <p className="whitespace-nowrap text-[9px] leading-3 uppercase tracking-wider text-white/35">Corrosion</p>
+                            <p className="text-base leading-5 font-bold font-mono" style={{ color }}>
                               {scan.rustPercent}%
                             </p>
                           </div>
-                          <div className="min-w-[62px]">
-                            <p className="h-4 text-[10px] leading-4 uppercase tracking-wider text-white/35">ASTM grade</p>
-                            <p className="h-5 text-base leading-5 font-semibold text-white">
+                          <div>
+                            <p className="whitespace-nowrap text-[9px] leading-3 uppercase tracking-wider text-white/35">ASTM grade</p>
+                            <p className="text-base leading-5 font-semibold text-white">
                               {scan.astmGrade}
                             </p>
                           </div>
                           <span
-                            className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+                            className="col-span-3 w-fit max-w-full truncate rounded-full px-2 py-0.5 text-[10px] font-medium"
                             style={{ background: color + "22", color }}
                           >
                             {scan.classificationLabel}

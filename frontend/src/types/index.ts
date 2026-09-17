@@ -103,6 +103,7 @@ export interface AnalysisResponse {
 
 export interface AnalyzeCorrosionOptions {
   accessToken?: string
+  title?: string
   signal?: AbortSignal
   timeoutMs?: number
 }

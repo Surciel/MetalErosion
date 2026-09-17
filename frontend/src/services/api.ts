@@ -137,6 +137,7 @@ export async function analyzeCorrosion(
 
   const formData = new FormData()
   formData.append("file", file)
+  if (options.title) formData.append("title", options.title)
 
   const headers: HeadersInit = {}
   if (options.accessToken) {

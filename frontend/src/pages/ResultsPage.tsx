@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import PageGrid from "@/components/PageGrid"
+import ScanPreparationModal from "@/components/ScanPreparationModal"
 import { severityColor } from "@/utils/severity"
 import type { ScanResult, View } from "@/types"
 
@@ -34,7 +35,7 @@ export default function ResultsPage({
   sessionScans: ScanResult[]
   onNavigate: (v: View) => void
   onClose: () => void
-  onUpload: (file: File, url: string) => void
+  onUpload: (file: File, url: string, title: string) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [displayed, setDisplayed] = useState<ScanResult>(result)
@@ -42,15 +43,25 @@ export default function ResultsPage({
   const carouselRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const dragDepth = useRef(0)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [pendingUrl, setPendingUrl] = useState("")
 
   useEffect(() => {
     setDisplayed(result)
   }, [result])
 
+  useEffect(() => {
+    return () => {
+      if (pendingUrl.startsWith("blob:")) URL.revokeObjectURL(pendingUrl)
+    }
+  }, [pendingUrl])
+
   const processFile = useCallback(
     (file: File) => {
       if (!file.type.startsWith("image/")) return
-      onUpload(file, URL.createObjectURL(file))
+      if (pendingUrl.startsWith("blob:")) URL.revokeObjectURL(pendingUrl)
+      setPendingFile(file)
+      setPendingUrl(URL.createObjectURL(file))
     },
     [onUpload],
   )
@@ -83,12 +94,22 @@ export default function ResultsPage({
 
   const color = severityColor(displayed.rustPercent)
 
-  const scroll = (dir: "left" | "right") => {
-    if (!carouselRef.current) return
-    carouselRef.current.scrollBy({
-      left: dir === "left" ? -200 : 200,
-      behavior: "smooth",
-    })
+  const moveSelection = (direction: "left" | "right") => {
+    const currentIndex = sessionScans.findIndex(
+      (scan) => scan.id === displayed.id,
+    )
+    if (currentIndex < 0) return
+
+    const nextIndex =
+      direction === "left" ? currentIndex - 1 : currentIndex + 1
+    const nextScan = sessionScans[nextIndex]
+    if (!nextScan) return
+
+    setDisplayed(nextScan)
+    const nextButton = carouselRef.current?.querySelector<HTMLButtonElement>(
+      `[data-scan-id="${CSS.escape(nextScan.id)}"]`,
+    )
+    nextButton?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" })
   }
 
   return (
@@ -263,7 +284,9 @@ export default function ResultsPage({
               </p>
               <div className="flex items-center gap-3 max-w-3xl mx-auto">
                 <button
-                  onClick={() => scroll("left")}
+                  onClick={() => moveSelection("left")}
+                  disabled={sessionScans.findIndex((scan) => scan.id === displayed.id) <= 0}
+                  aria-label="Previous session scan"
                   className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all hover:bg-white/10"
                   style={{ background: "var(--color-card)" }}
                 >
@@ -281,6 +304,7 @@ export default function ResultsPage({
                     return (
                       <button
                         key={scan.id}
+                        data-scan-id={scan.id}
                         onClick={() => setDisplayed(scan)}
                         className="flex-shrink-0 rounded-xl overflow-hidden transition-all"
                         style={{
@@ -312,7 +336,9 @@ export default function ResultsPage({
                 </div>
 
                 <button
-                  onClick={() => scroll("right")}
+                  onClick={() => moveSelection("right")}
+                  disabled={sessionScans.findIndex((scan) => scan.id === displayed.id) >= sessionScans.length - 1}
+                  aria-label="Next session scan"
                   className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all hover:bg-white/10"
                   style={{ background: "var(--color-card)" }}
                 >
@@ -433,6 +459,23 @@ export default function ResultsPage({
           </PageGrid>
         </section>
       </div>
+      {pendingFile && pendingUrl && (
+        <ScanPreparationModal
+          file={pendingFile}
+          sourceUrl={pendingUrl}
+          onCancel={() => {
+            URL.revokeObjectURL(pendingUrl)
+            setPendingFile(null)
+            setPendingUrl("")
+          }}
+          onConfirm={(croppedFile, previewUrl, title) => {
+            URL.revokeObjectURL(pendingUrl)
+            setPendingFile(null)
+            setPendingUrl("")
+            onUpload(croppedFile, previewUrl, title)
+          }}
+        />
+      )}
     </div>
   )
 }

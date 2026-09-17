@@ -15,6 +15,21 @@ ALTER TABLE public.scans
 ADD COLUMN IF NOT EXISTS title TEXT;
 ```
 
+The cropped upload is the only image retained. Store its durable Storage object path as well:
+
+```sql
+ALTER TABLE public.scans
+ADD COLUMN IF NOT EXISTS storage_path TEXT;
+```
+
+For new rows, use a collision-resistant path such as:
+
+```text
+scans/{authenticated_user_id}/{generated_uuid}.jpg
+```
+
+Do not use the user-provided title or filename as the object path. The title is display metadata; `storage_path` is the storage identity.
+
 The backend accepts titles up to 120 characters. Add the matching database constraint:
 
 ```sql
@@ -64,6 +79,8 @@ The authenticated history response should include:
 }
 ```
 
+If the Storage bucket is private, generate a fresh signed URL from `storage_path` whenever analysis or history data is returned. Do not depend on an old signed URL saved in `image_url`.
+
 The title-edit operation is:
 
 ```text
@@ -90,3 +107,5 @@ Run the SQL in the Supabase SQL Editor or add equivalent statements to the teamâ
 4. An owner can edit the title through `PATCH /history/{scan_id}`.
 5. A different authenticated user cannot edit or read the scan.
 6. Titles longer than 120 characters or containing only whitespace are rejected by the API.
+7. Failed database persistence removes the uploaded cropped object.
+8. Deleting a scan removes the cropped object referenced by `storage_path`.

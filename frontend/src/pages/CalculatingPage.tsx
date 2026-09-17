@@ -9,6 +9,7 @@ export default function CalculatingPage({
   username,
   imageUrl,
   imageName,
+  scanTitle,
   file,
   onDone,
   onNavigate,
@@ -17,6 +18,7 @@ export default function CalculatingPage({
   username: string
   imageUrl: string
   imageName: string
+  scanTitle: string
   file: File | null
   onDone: (result: ScanResult) => void
   onNavigate: (view: "home" | "landing") => void
@@ -82,6 +84,7 @@ export default function CalculatingPage({
       setPhase("processing")
       return analyzeCorrosion(file, imageUrl, {
         accessToken: session.access_token,
+        title: scanTitle,
         signal: controller.signal,
       })
     }

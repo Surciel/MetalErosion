@@ -56,6 +56,7 @@ export default function App() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [uploadedImageUrl, setUploadedImageUrl] = useState("")
   const [uploadedImageName, setUploadedImageName] = useState("")
+  const [scanTitle, setScanTitle] = useState("")
   const [currentResult, setCurrentResult] = useState<ScanResult | null>(null)
   const [sessionScans, setSessionScans] = useState<ScanResult[]>([])
   const [history, setHistory] = useState<ScanResult[]>([])
@@ -319,10 +320,11 @@ export default function App() {
     setView("landing")
   }
 
-  const handleUpload = (file: File, url: string) => {
+  const handleUpload = (file: File, url: string, title: string) => {
     setUploadedFile(file)
     setUploadedImageUrl(url)
     setUploadedImageName(file.name)
+    setScanTitle(title)
     setView("calculating")
   }
 
@@ -339,7 +341,10 @@ export default function App() {
     setView("history-detail")
   }
 
-  const handleDeleteHistoryScan = async (scanId: string) => {
+  const handleDeleteHistoryScan = async (
+    scanId: string,
+    stayOnHistory = false,
+  ) => {
     const {
       data: { session },
     } = await supabase.auth.getSession()
@@ -357,7 +362,7 @@ export default function App() {
       const nextScan = remainingHistory[0] ?? null
       setSelectedHistoryScan(nextScan)
       setCurrentResult((current) => (current?.id === scanId ? nextScan : current))
-      setView(nextScan ? "history-detail" : "history")
+      setView(stayOnHistory || !nextScan ? "history" : "history-detail")
     } catch (cause: unknown) {
       if (cause instanceof ApiError && cause.status === 401) {
         handleSessionExpired()
@@ -552,6 +557,7 @@ export default function App() {
           username={username}
           imageUrl={uploadedImageUrl}
           imageName={uploadedImageName}
+          scanTitle={scanTitle}
           file={uploadedFile}
           onDone={handleCalculationDone}
           onNavigate={setView}

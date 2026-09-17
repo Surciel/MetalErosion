@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import cv2
 import numpy as np
@@ -174,6 +174,16 @@ def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
     rust_percentage = float(scan["rust_percentage"])
     report = prediction_engine.analyze_scan(rust_percentage, "Hardware")
     image_url = str(scan["image_url"])
+    storage_path = scan.get("storage_path")
+    if storage_path:
+        try:
+            signed = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).create_signed_url(
+                storage_path,
+                SUPABASE_SIGNED_URL_TTL,
+            )
+            image_url = signed.get("signedURL") or signed.get("signedUrl") or image_url
+        except Exception:
+            logger.exception("History image URL refresh failed")
     filename = image_url.rsplit("/", 1)[-1].split("?", 1)[0] or "image"
     return _scan_response(
         scan_id=scan["id"],
@@ -195,6 +205,7 @@ def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
 async def analyze_corrosion(
     file: UploadFile = File(...),
     asset_category: str = Form("Hardware"),
+    title: str = Form(""),
     submitted_user_id: Optional[str] = Form(default=None),
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
@@ -209,6 +220,12 @@ async def analyze_corrosion(
             status_code=403,
             detail="The submitted user does not match the authenticated user.",
         )
+
+    normalized_title = title.strip()
+    if not normalized_title:
+        raise HTTPException(status_code=400, detail="A scan title is required.")
+    if len(normalized_title) > 120:
+        raise HTTPException(status_code=400, detail="Scan titles must be 120 characters or fewer.")
 
     image = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
     if image is None or image.size == 0:
@@ -246,7 +263,8 @@ async def analyze_corrosion(
     flat_boxes = boxes.flatten().tolist()
     report = prediction_engine.analyze_scan(rust_percentage, asset_category)
     filename = file.filename or "image.jpg"
-    storage_path = f"scans/{user['id']}/{filename}"
+    file_extension = ".jpg" if file.content_type == "image/jpeg" else ".png"
+    storage_path = f"scans/{user['id']}/{uuid4()}{file_extension}"
     try:
         storage = supabase.storage.from_(SUPABASE_STORAGE_BUCKET)
         storage.upload(
@@ -266,13 +284,17 @@ async def analyze_corrosion(
         "user_id": user["id"],
         "image_url": signed_url,
         "storage_path": storage_path,
-        "title": filename,
+        "title": normalized_title,
         "rust_percentage": rust_percentage,
         "box_coordinates": flat_boxes,
     }
     try:
         inserted = supabase.table("scans").insert(supabase_payload).execute()
     except Exception as exc:
+        try:
+            supabase.storage.from_(SUPABASE_STORAGE_BUCKET).remove([storage_path])
+        except Exception:
+            logger.exception("Failed to clean up scan storage after database failure")
         logger.exception("Scan database persistence failed")
         raise HTTPException(
             status_code=502,
@@ -294,14 +316,14 @@ async def analyze_corrosion(
         box_coordinates=flat_boxes,
         user_id=user["id"],
         signed_url=signed_url,
-        title=filename,
+        title=normalized_title,
     )
 
 @app.get("/history")
 def history(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
     response = (
         supabase.table("scans")
-        .select("id,user_id,image_url,title,rust_percentage,box_coordinates,created_at")
+        .select("id,user_id,image_url,storage_path,title,rust_percentage,box_coordinates,created_at")
         .eq("user_id", user["id"])
         .order("created_at", desc=True)
         .execute()
@@ -321,7 +343,7 @@ def update_history_scan(
 
     existing = (
         supabase.table("scans")
-        .select("id,user_id,image_url,title,rust_percentage,box_coordinates,created_at")
+        .select("id,user_id,image_url,storage_path,title,rust_percentage,box_coordinates,created_at")
         .eq("id", str(scan_id))
         .eq("user_id", user["id"])
         .maybe_single()

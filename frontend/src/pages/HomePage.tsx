@@ -1,7 +1,8 @@
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef, useCallback, useEffect } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import PageGrid from "@/components/PageGrid"
+import ScanPreparationModal from "@/components/ScanPreparationModal"
 import type { View } from "@/types"
 
 export default function HomePage({
@@ -12,17 +13,27 @@ export default function HomePage({
 }: {
   username: string
   isAdmin?: boolean
-  onUpload: (file: File, url: string) => void
+  onUpload: (file: File, url: string, title: string) => void
   onNavigate: (v: View) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [dragging, setDragging] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [pendingUrl, setPendingUrl] = useState("")
+
+  useEffect(() => {
+    return () => {
+      if (pendingUrl.startsWith("blob:")) URL.revokeObjectURL(pendingUrl)
+    }
+  }, [pendingUrl])
 
   const processFile = useCallback(
     (file: File) => {
       if (!file.type.startsWith("image/")) return
-      onUpload(file, URL.createObjectURL(file))
+      if (pendingUrl.startsWith("blob:")) URL.revokeObjectURL(pendingUrl)
+      setPendingFile(file)
+      setPendingUrl(URL.createObjectURL(file))
     },
     [onUpload],
   )
@@ -124,6 +135,23 @@ export default function HomePage({
           </div>
         </PageGrid>
       </main>
+      {pendingFile && pendingUrl && (
+        <ScanPreparationModal
+          file={pendingFile}
+          sourceUrl={pendingUrl}
+          onCancel={() => {
+            URL.revokeObjectURL(pendingUrl)
+            setPendingFile(null)
+            setPendingUrl("")
+          }}
+          onConfirm={(croppedFile, previewUrl, title) => {
+            URL.revokeObjectURL(pendingUrl)
+            setPendingFile(null)
+            setPendingUrl("")
+            onUpload(croppedFile, previewUrl, title)
+          }}
+        />
+      )}
     </div>
   )
 }
