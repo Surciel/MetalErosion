@@ -89,6 +89,7 @@ function mapAnalysisResponse(
     id: String(data.scan_id ?? createdAt),
     imageUrl: data.image_url ?? previewImageUrl,
     imageName: data.filename,
+    title: data.title ?? undefined,
     rustPercent: data.rust_percentage,
     astmGrade: data.astm_grade,
     priorityLevel: data.priority_level,
@@ -272,6 +273,34 @@ export async function deleteScanHistory(
   if (!response.ok) {
     await throwApiError(response)
   }
+}
+
+export async function updateScanHistory(
+  accessToken: string,
+  scanId: string,
+  title: string,
+): Promise<ScanResult> {
+  const response = await fetch(
+    `${API_BASE_URL}/history/${encodeURIComponent(scanId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ title }),
+    },
+  )
+
+  if (!response.ok) {
+    await throwApiError(response)
+  }
+
+  const payload: unknown = await response.json()
+  if (!isAnalysisResponse(payload)) {
+    throw new Error("The history update response was not in the expected format.")
+  }
+  return mapAnalysisResponse(payload)
 }
 
 type AdminAccountResponse = {

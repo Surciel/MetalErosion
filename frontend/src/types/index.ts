@@ -72,6 +72,7 @@ export interface ScanResult {
   id: string
   imageUrl: string
   imageName: string
+  title?: string
   rustPercent: number
   astmGrade: number
   priorityLevel: string
@@ -88,6 +89,7 @@ export interface ScanResult {
 export interface AnalysisResponse {
   status: string
   filename: string
+  title?: string | null
   rust_percentage: number
   astm_grade: number
   priority_level: string

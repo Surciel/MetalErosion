@@ -18,17 +18,23 @@ export default function HistoryDetailPage({
   onBack: () => void
   onNavigate: (v: View) => void
   onDelete: (scanId: string) => Promise<void>
+  onEdit: (scanId: string, title: string) => Promise<void>
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [displayed, setDisplayed] = useState<ScanResult>(scan)
   const [deletePending, setDeletePending] = useState(false)
   const [deleteError, setDeleteError] = useState("")
+  const [editingTitle, setEditingTitle] = useState(false)
+  const [titleValue, setTitleValue] = useState(scan.title || scan.imageName)
+  const [editPending, setEditPending] = useState(false)
   const safeHistory = history ?? []
   const color = severityColor(displayed.rustPercent)
 
   useEffect(() => {
     setDisplayed(scan)
     setDeleteError("")
+    setTitleValue(scan.title || scan.imageName)
+    setEditingTitle(false)
   }, [scan])
 
   const handleDelete = async () => {
@@ -46,6 +52,25 @@ export default function HistoryDetailPage({
       )
     } finally {
       setDeletePending(false)
+    }
+  }
+
+  const handleEdit = async () => {
+    const title = titleValue.trim()
+    if (!title) {
+      setDeleteError("A scan title is required.")
+      return
+    }
+    setEditPending(true)
+    setDeleteError("")
+    try {
+      await onEdit(displayed.id, title)
+      setDisplayed((current) => ({ ...current, title }))
+      setEditingTitle(false)
+    } catch (cause: unknown) {
+      setDeleteError(cause instanceof Error ? cause.message : "Unable to update the scan title.")
+    } finally {
+      setEditPending(false)
     }
   }
 
@@ -168,10 +193,30 @@ export default function HistoryDetailPage({
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
                   <div className="absolute bottom-4 left-4">
-                    <p className="text-white font-semibold text-sm">
-                      {displayed.imageName}
-                    </p>
+                    {editingTitle ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          value={titleValue}
+                          onChange={(event) => setTitleValue(event.target.value)}
+                          maxLength={120}
+                          autoFocus
+                          className="rounded border bg-black/50 px-2 py-1 text-sm text-white outline-none"
+                          style={{ borderColor: "rgba(255,255,255,0.3)" }}
+                        />
+                        <button onClick={() => void handleEdit()} disabled={editPending} className="text-xs text-green-200">Save</button>
+                        <button onClick={() => setEditingTitle(false)} className="text-xs text-white/70">Cancel</button>
+                      </div>
+                    ) : (
+                      <p className="text-white font-semibold text-sm">
+                        {displayed.title || displayed.imageName}
+                      </p>
+                    )}
                     <p className="text-white/50 text-xs">{displayed.date}</p>
+                    {!editingTitle && (
+                      <button onClick={() => setEditingTitle(true)} className="mt-1 text-xs text-white/60 hover:text-white">
+                        Edit title
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

@@ -16,6 +16,7 @@ import {
   getCurrentAccount,
   getScanHistory,
   deleteScanHistory,
+  updateScanHistory,
   ApiError,
   updateAdminAccount,
   updateAdminRecoveryRequest,
@@ -371,6 +372,37 @@ export default function App() {
     }
   }
 
+  const handleUpdateHistoryScan = async (scanId: string, title: string) => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session?.access_token) {
+      handleSessionExpired()
+      throw new Error("Your session has expired. Please log in again.")
+    }
+
+    try {
+      const updatedScan = await updateScanHistory(
+        session.access_token,
+        scanId,
+        title,
+      )
+      const replaceScan = (scan: ScanResult) =>
+        scan.id === updatedScan.id ? updatedScan : scan
+      setHistory((current) => current.map(replaceScan))
+      setSessionScans((current) => current.map(replaceScan))
+      setSelectedHistoryScan((current) => current ? replaceScan(current) : current)
+      setCurrentResult((current) => current ? replaceScan(current) : current)
+    } catch (cause: unknown) {
+      if (cause instanceof ApiError && cause.status === 401) {
+        handleSessionExpired()
+      }
+      throw cause instanceof Error
+        ? cause
+        : new Error("Unable to update scan title.")
+    }
+  }
+
   const handleAdminRangeChange = async (range: MetricRange) => {
     setMetricRange(range)
     const {
@@ -568,6 +600,8 @@ export default function App() {
           historyError={historyError}
           onSelect={handleSelectHistoryScan}
           onNavigate={setView}
+          onDelete={handleDeleteHistoryScan}
+          onEdit={handleUpdateHistoryScan}
         />
       )
     case "history-detail":
@@ -579,6 +613,7 @@ export default function App() {
           onBack={() => setView("history")}
           onNavigate={setView}
           onDelete={handleDeleteHistoryScan}
+          onEdit={handleUpdateHistoryScan}
         />
       ) : null
     default:

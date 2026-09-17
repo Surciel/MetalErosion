@@ -85,6 +85,10 @@ class RecoveryUpdate(BaseModel):
     status: str = Field(pattern="^(verified|completed|failed)$")
 
 
+class ScanTitleUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+
+
 def _authorization_token(authorization: Optional[str]) -> str:
     if not authorization:
         raise HTTPException(status_code=401, detail="Authorization is required.")
@@ -145,10 +149,12 @@ def _scan_response(
     box_coordinates: list[int],
     user_id: Optional[str] = None,
     signed_url: Optional[str] = None,
+    title: Optional[str] = None,
 ) -> dict[str, Any]:
     response = {
         "status": "success",
         "filename": filename,
+        "title": title or filename,
         "image_url": image_url,
         "rust_percentage": rust_percentage,
         "astm_grade": astm_grade,
@@ -180,6 +186,7 @@ def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
         recommendation=report["remediation_protocol"],
         box_coordinates=scan.get("box_coordinates") or [],
         user_id=scan.get("user_id"),
+        title=scan.get("title") or filename,
     )
 
 
@@ -259,6 +266,7 @@ async def analyze_corrosion(
         "user_id": user["id"],
         "image_url": signed_url,
         "storage_path": storage_path,
+        "title": filename,
         "rust_percentage": rust_percentage,
         "box_coordinates": flat_boxes,
     }
@@ -286,18 +294,62 @@ async def analyze_corrosion(
         box_coordinates=flat_boxes,
         user_id=user["id"],
         signed_url=signed_url,
+        title=filename,
     )
 
 @app.get("/history")
 def history(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
     response = (
         supabase.table("scans")
-        .select("id,user_id,image_url,rust_percentage,box_coordinates,created_at")
+        .select("id,user_id,image_url,title,rust_percentage,box_coordinates,created_at")
         .eq("user_id", user["id"])
         .order("created_at", desc=True)
         .execute()
     )
     return [_history_scan_response(scan) for scan in (response.data or [])]
+
+
+@app.patch("/history/{scan_id}")
+def update_history_scan(
+    scan_id: UUID,
+    changes: ScanTitleUpdate,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    title = changes.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="A scan title is required.")
+
+    existing = (
+        supabase.table("scans")
+        .select("id,user_id,image_url,title,rust_percentage,box_coordinates,created_at")
+        .eq("id", str(scan_id))
+        .eq("user_id", user["id"])
+        .maybe_single()
+        .execute()
+    )
+    scan = existing.data
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan history was not found.")
+
+    try:
+        updated = (
+            supabase.table("scans")
+            .update({"title": title})
+            .eq("id", str(scan_id))
+            .eq("user_id", user["id"])
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("Scan title update failed")
+        raise HTTPException(
+            status_code=502,
+            detail="The scan title could not be updated.",
+        ) from exc
+
+    updated_scan = {**scan, "title": title}
+    if updated.data:
+        updated_scan.update(updated.data[0])
+    return _history_scan_response(updated_scan)
 
 
 @app.get("/me")
