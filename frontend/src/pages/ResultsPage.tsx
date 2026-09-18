@@ -3,6 +3,7 @@ import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import PageGrid from "@/components/PageGrid"
 import ScanPreparationModal from "@/components/ScanPreparationModal"
+import BoundingBoxImage from "@/components/BoundingBoxImage"
 import { severityColor } from "@/utils/severity"
 import type { ScanResult, View } from "@/types"
 
@@ -163,21 +164,23 @@ export default function ResultsPage({
                 className="relative w-full rounded-2xl overflow-hidden"
                 style={{ background: "var(--color-card)" }}
               >
-                <img
+                <BoundingBoxImage
                   src={displayed.imageUrl}
                   alt={displayed.imageName}
-                  className="w-full object-cover"
-                  style={{ height: "300px" }}
+                  coordinates={displayed.boxCoordinates}
+                  expandable
+                  className="w-full"
+                  imageClassName="h-[300px] w-full object-cover"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                <div className="absolute bottom-4 left-4">
+                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                <div className="pointer-events-none absolute bottom-4 left-4">
                   <p className="text-white font-semibold text-sm">
                     {displayed.imageName}
                   </p>
                   <p className="text-white/50 text-xs">{displayed.date}</p>
                 </div>
                 {/* Rust ring overlay */}
-                <div className="absolute bottom-4 right-4">
+                <div className="pointer-events-none absolute bottom-4 right-4">
                   <svg width="68" height="68" viewBox="0 0 68 68">
                     <circle
                       cx="34"

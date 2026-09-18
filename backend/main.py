@@ -115,7 +115,9 @@ def _get_user(authorization: Optional[str]) -> dict[str, Any]:
 def current_user(
     authorization: Optional[str] = Header(default=None),
 ) -> dict[str, Any]:
-    return _get_user(authorization)
+    user = _get_user(authorization)
+    _ensure_profile(user)
+    return user
 
 
 def _profile(user_id: str) -> dict[str, Any]:
@@ -126,7 +128,30 @@ def _profile(user_id: str) -> dict[str, Any]:
         .maybe_single()
         .execute()
     )
-    return response.data or {}
+    return getattr(response, "data", None) or {}
+
+
+def _ensure_profile(user: dict[str, Any]) -> None:
+    if _profile(user["id"]):
+        return
+
+    email = user.get("email") or ""
+    username = email.split("@", 1)[0].strip() or f"user-{user['id'][:8]}"
+    try:
+        supabase.table("profiles").insert(
+            {
+                "id": user["id"],
+                "email": email,
+                "username": username,
+                "role": "user",
+            }
+        ).execute()
+    except Exception as exc:
+        logger.exception("Authenticated user profile bootstrap failed")
+        raise HTTPException(
+            status_code=502,
+            detail="The authenticated user profile could not be initialized.",
+        ) from exc
 
 
 def admin_user(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
@@ -174,16 +199,6 @@ def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
     rust_percentage = float(scan["rust_percentage"])
     report = prediction_engine.analyze_scan(rust_percentage, "Hardware")
     image_url = str(scan["image_url"])
-    storage_path = scan.get("storage_path")
-    if storage_path:
-        try:
-            signed = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).create_signed_url(
-                storage_path,
-                SUPABASE_SIGNED_URL_TTL,
-            )
-            image_url = signed.get("signedURL") or signed.get("signedUrl") or image_url
-        except Exception:
-            logger.exception("History image URL refresh failed")
     filename = image_url.rsplit("/", 1)[-1].split("?", 1)[0] or "image"
     return _scan_response(
         scan_id=scan["id"],
@@ -283,7 +298,6 @@ async def analyze_corrosion(
     supabase_payload = {
         "user_id": user["id"],
         "image_url": signed_url,
-        "storage_path": storage_path,
         "title": normalized_title,
         "rust_percentage": rust_percentage,
         "box_coordinates": flat_boxes,
@@ -323,7 +337,7 @@ async def analyze_corrosion(
 def history(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
     response = (
         supabase.table("scans")
-        .select("id,user_id,image_url,storage_path,title,rust_percentage,box_coordinates,created_at")
+        .select("id,user_id,image_url,title,rust_percentage,box_coordinates,created_at")
         .eq("user_id", user["id"])
         .order("created_at", desc=True)
         .execute()
@@ -343,7 +357,7 @@ def update_history_scan(
 
     existing = (
         supabase.table("scans")
-        .select("id,user_id,image_url,storage_path,title,rust_percentage,box_coordinates,created_at")
+        .select("id,user_id,image_url,title,rust_percentage,box_coordinates,created_at")
         .eq("id", str(scan_id))
         .eq("user_id", user["id"])
         .maybe_single()
@@ -368,9 +382,7 @@ def update_history_scan(
             detail="The scan title could not be updated.",
         ) from exc
 
-    updated_scan = {**scan, "title": title}
-    if updated.data:
-        updated_scan.update(updated.data[0])
+    updated_scan = {**scan, **(updated.data[0] if updated.data else {}), "title": title}
     return _history_scan_response(updated_scan)
 
 
@@ -395,7 +407,7 @@ def delete_history_scan(
 ) -> dict[str, Any]:
     existing = (
         supabase.table("scans")
-        .select("id,storage_path")
+        .select("id")
         .eq("id", str(scan_id))
         .eq("user_id", user["id"])
         .maybe_single()
@@ -405,10 +417,7 @@ def delete_history_scan(
     if not scan:
         raise HTTPException(status_code=404, detail="Scan history was not found.")
 
-    storage_path = scan.get("storage_path")
     try:
-        if storage_path:
-            supabase.storage.from_(SUPABASE_STORAGE_BUCKET).remove([storage_path])
         supabase.table("scans").delete().eq("id", str(scan_id)).eq(
             "user_id", user["id"]
         ).execute()

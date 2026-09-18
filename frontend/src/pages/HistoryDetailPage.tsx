@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
+import BoundingBoxImage from "@/components/BoundingBoxImage"
 import { severityColor } from "@/utils/severity"
 import type { ScanResult, View } from "@/types"
 
@@ -136,10 +137,12 @@ export default function HistoryDetailPage({
                     className="relative w-full rounded-md overflow-hidden"
                     style={{ aspectRatio: "16/9" }}
                   >
-                    <img
+                    <BoundingBoxImage
                       src={s.imageUrl}
                       alt={s.imageName}
-                      className="w-full h-full object-cover"
+                      coordinates={s.boxCoordinates}
+                      className="h-full w-full"
+                      imageClassName="h-full w-full object-cover"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent" />
                     {/* Slide number */}
@@ -185,13 +188,15 @@ export default function HistoryDetailPage({
                   className="relative w-full rounded-2xl overflow-hidden"
                   style={{ background: "var(--color-card)" }}
                 >
-                  <img
+                  <BoundingBoxImage
                     src={displayed.imageUrl}
                     alt={displayed.imageName}
-                    className="w-full object-cover"
-                    style={{ aspectRatio: "16/9" }}
+                    coordinates={displayed.boxCoordinates}
+                    expandable
+                    className="w-full"
+                    imageClassName="aspect-[16/9] w-full object-cover"
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
                   <div className="absolute bottom-4 left-4">
                     {editingTitle ? (
                       <div className="flex items-center gap-2">
