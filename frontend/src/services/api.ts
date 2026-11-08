@@ -96,6 +96,7 @@ function mapAnalysisResponse(
     classification: `ASTM Grade ${data.astm_grade}`,
     classificationLabel: data.priority_level,
     dss: data.recommendation,
+    boxCoordinates: data.box_coordinates ?? [],
     date: new Date(createdAt).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",

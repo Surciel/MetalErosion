@@ -2,6 +2,7 @@ import { useMemo, useState } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import PageGrid from "@/components/PageGrid"
+import BoundingBoxImage from "@/components/BoundingBoxImage"
 import { severityColor } from "@/utils/severity"
 import type { ScanResult, View } from "@/types"
 
@@ -256,10 +257,12 @@ export default function HistoryPage({
                         className="h-[86px] w-28 flex-shrink-0 overflow-hidden"
                         style={{ background: "var(--color-btn)" }}
                       >
-                        <img
+                        <BoundingBoxImage
                           src={scan.imageUrl}
                           alt={scan.imageName}
-                          className="h-full w-full object-cover"
+                          coordinates={scan.boxCoordinates}
+                          className="h-full w-full"
+                          imageClassName="h-full w-full object-cover"
                         />
                       </div>
                       <div className="flex min-w-0 flex-1 items-center gap-4 overflow-hidden pr-5">
@@ -271,9 +274,9 @@ export default function HistoryPage({
                                 onChange={(event) => setEditingTitle(event.target.value)}
                                 onClick={(event) => event.stopPropagation()}
                                 onKeyDown={(event) => {
+                                  event.stopPropagation()
                                   if (event.key === "Enter") {
                                     event.preventDefault()
-                                    event.stopPropagation()
                                     void saveEdit(scan)
                                   }
                                 }}

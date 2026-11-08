@@ -79,6 +79,7 @@ export interface ScanResult {
   classification: string
   classificationLabel: string
   dss: string
+  boxCoordinates: number[]
   rustExplanation?: string
   classificationExplanation?: string
   date: string
