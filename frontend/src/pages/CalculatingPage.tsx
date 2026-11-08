@@ -132,6 +132,12 @@ export default function CalculatingPage({
   }, [file, imageUrl, retryToken])
 
   const isActive = phase === "checking-session" || phase === "processing"
+  // Input rejected by validation (not metal / unusable lighting): retrying the same photo cannot help.
+  const isRejectedInput = error?.kind === "not-metal" || error?.kind === "poor-lighting"
+  const rejectedHeading =
+    error?.kind === "poor-lighting"
+      ? "The lighting in this photo is unusable."
+      : "This doesn't look like metal."
   const phaseLabel =
     phase === "checking-session"
       ? "Checking your session..."
@@ -168,7 +174,11 @@ export default function CalculatingPage({
 
       <main className="flex-1 flex items-center justify-center px-6 py-16">
         <div className="w-full max-w-xl text-center">
-          {error ? (
+          {isRejectedInput ? (
+            <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border-2 border-amber-300/70 bg-amber-300/10 text-4xl font-semibold text-amber-200" aria-label="Invalid input">
+              !
+            </div>
+          ) : error ? (
             <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full border-2 border-red-300/70 bg-red-300/10 text-4xl font-light text-red-200" aria-label="Analysis failed">
               ×
             </div>
@@ -176,10 +186,10 @@ export default function CalculatingPage({
             <div className="analysis-spinner mx-auto h-16 w-16 rounded-full border-4 border-white/15 border-t-red-300" aria-label="Analysis in progress" />
           )}
           <p className="mt-8 text-xs font-mono uppercase tracking-[0.2em] text-white/40">
-            {error ? "Analysis failed" : phase === "complete" ? "Scan complete" : "Please wait"}
+            {isRejectedInput ? "Invalid input" : error ? "Analysis failed" : phase === "complete" ? "Scan complete" : "Please wait"}
           </p>
           <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">
-            {error ? "We couldn't finish this scan." : phase === "complete" ? "Opening your results..." : "Analyzing your image..."}
+            {isRejectedInput ? rejectedHeading : error ? "We couldn't finish this scan." : phase === "complete" ? "Opening your results..." : "Analyzing your image..."}
           </h1>
           <p className="mx-auto mt-4 max-w-md text-sm leading-6 text-white/55">
             {error?.message || phaseDetail}
@@ -192,12 +202,20 @@ export default function CalculatingPage({
           )}
           {error && (
             <div className="mt-8 flex flex-wrap justify-center gap-3">
-              <button type="button" onClick={() => setRetryToken((token) => token + 1)} disabled={!error.retryable} className="rounded-lg bg-[var(--color-accent)] px-5 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">
-                Retry analysis
-              </button>
-              <button type="button" onClick={() => onNavigate("home")} className="rounded-lg border border-white/15 px-5 py-2.5 text-sm text-white/70 hover:text-white">
-                Scan another image
-              </button>
+              {isRejectedInput ? (
+                <button type="button" onClick={() => onNavigate("home")} className="rounded-lg bg-[var(--color-accent)] px-5 py-2.5 text-sm font-medium text-white">
+                  Choose another image
+                </button>
+              ) : (
+                <>
+                  <button type="button" onClick={() => setRetryToken((token) => token + 1)} disabled={!error.retryable} className="rounded-lg bg-[var(--color-accent)] px-5 py-2.5 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">
+                    Retry analysis
+                  </button>
+                  <button type="button" onClick={() => onNavigate("home")} className="rounded-lg border border-white/15 px-5 py-2.5 text-sm text-white/70 hover:text-white">
+                    Scan another image
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>

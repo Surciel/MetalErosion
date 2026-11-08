@@ -237,7 +237,7 @@ export default function HistoryPage({
             ) : (
               <div className="flex flex-col gap-3">
                 {visibleHistory.map((scan) => {
-                  const color = severityColor(scan.rustPercent)
+                  const color = severityColor(scan)
                   return (
                     <div
                       key={scan.id}

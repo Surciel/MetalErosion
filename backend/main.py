@@ -1,5 +1,6 @@
 import os
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -9,18 +10,17 @@ import cv2
 import numpy as np
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Query
-from datetime import datetime, timedelta
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
-from fastapi import Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from supabase import Client, create_client
 from supabase_auth.errors import AuthError
 from ultralytics import YOLO
 
+from image_quality import assess_lighting
 from predictive_engine import ISOPredictiveEngine
+from rust_measurement import colour_rust_mask, rust_patch_boxes
+from spread_analysis import classify_distribution
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +62,44 @@ app.add_middleware(
 prediction_engine = ISOPredictiveEngine()
 model = YOLO(MODEL_PATH)
 
-LOWER_RUST1 = np.array([0, 40, 30])
-UPPER_RUST1 = np.array([25, 255, 200])
-LOWER_RUST2 = np.array([170, 40, 30])
-UPPER_RUST2 = np.array([180, 255, 200])
-PADDING = 30
+
+def _class_id(name: str) -> int:
+    for class_id, class_name in model.names.items():
+        if str(class_name).lower() == name:
+            return int(class_id)
+    raise RuntimeError(
+        f"The model at {MODEL_PATH} has no '{name}' class "
+        f"(found {list(model.names.values())}). "
+        "A metal/rust segmentation model is required."
+    )
+
+
+if model.task != "segment":
+    raise RuntimeError(
+        f"The model at {MODEL_PATH} is a '{model.task}' model; "
+        "a metal/rust segmentation model is required."
+    )
+METAL_CLASS_ID = _class_id("metal")
+RUST_CLASS_ID = _class_id("rust")
+
+MODEL_CONFIDENCE = 0.25
+MODEL_IOU = 0.45
+MODEL_IMAGE_SIZE = 1024  # Matches the training imgsz of the segmentation model.
+INFERENCE_MAX_SIDE = 1024  # Large photos are downscaled first to bound mask memory.
+# Input validation ("error dropping"). Metal is checked first: the photo must contain a
+# confidently detected metal surface covering a minimum share of the image. Fully
+# corroded objects (no metal visible, only rust) pass only through a confident rust
+# detection of the same minimum size.
+VALIDATION_CONFIDENCE = float(os.getenv("VALIDATION_CONFIDENCE", "0.5"))
+MIN_SURFACE_AREA_RATIO = float(os.getenv("MIN_SURFACE_AREA_RATIO", "0.05"))
+# How rust % is measured inside the AI-detected metal surface:
+# - "color" (default): rust-coloured pixels inside the metal surface (rust_measurement.py).
+#   Needed while the model's rust masks cover whole objects instead of rust patches.
+# - "mask": the model's own rust masks. Switch to this only after retraining with tight
+#   rust-patch labels.
+RUST_MEASUREMENT = os.getenv("RUST_MEASUREMENT", "color").strip().lower()
+if RUST_MEASUREMENT not in ("color", "mask"):
+    raise RuntimeError("RUST_MEASUREMENT must be 'color' or 'mask'.")
 MAX_IMAGE_BYTES = 15 * 1024 * 1024
 
 
@@ -168,13 +201,12 @@ def _scan_response(
     filename: str,
     image_url: str,
     rust_percentage: float,
-    astm_grade: int,
-    priority_level: str,
-    recommendation: str,
+    report: dict[str, Any],
     box_coordinates: list[int],
     user_id: Optional[str] = None,
     signed_url: Optional[str] = None,
     title: Optional[str] = None,
+    lighting_status: Optional[str] = None,
 ) -> dict[str, Any]:
     response = {
         "status": "success",
@@ -182,9 +214,13 @@ def _scan_response(
         "title": title or filename,
         "image_url": image_url,
         "rust_percentage": rust_percentage,
-        "astm_grade": astm_grade,
-        "priority_level": priority_level,
-        "recommendation": recommendation,
+        "astm_grade": report["astm_grade"],
+        "astm_rating": report["astm_rating"],
+        "distribution_type": report["distribution_type"],
+        "days_to_critical": report["days_to_critical"],
+        "priority_level": report["priority_tier"],
+        "recommendation": report["remediation_protocol"],
+        "lighting_status": lighting_status,
         "box_coordinates": box_coordinates,
         "scan_id": str(scan_id) if scan_id is not None else None,
         "created_at": created_at,
@@ -195,9 +231,142 @@ def _scan_response(
     return response
 
 
+@dataclass
+class SurfaceSegmentation:
+    metal_mask: np.ndarray  # bool, inference resolution: model "metal" masks
+    rust_mask: np.ndarray  # bool, inference resolution: model "rust" masks
+    rust_boxes: list[int]  # flattened x1,y1,x2,y2 in original image pixels
+    confident_metal_mask: np.ndarray  # bool, metal detections >= VALIDATION_CONFIDENCE
+    confident_rust_mask: np.ndarray  # bool, rust detections >= VALIDATION_CONFIDENCE
+    # Rust pixels actually counted for rust % (see RUST_MEASUREMENT), within the surface.
+    measured_rust_mask: np.ndarray
+
+    @property
+    def surface_mask(self) -> np.ndarray:
+        return self.metal_mask | self.rust_mask
+
+    @property
+    def confident_metal_ratio(self) -> float:
+        return float(self.confident_metal_mask.mean()) if self.confident_metal_mask.size else 0.0
+
+    @property
+    def confident_rust_ratio(self) -> float:
+        return float(self.confident_rust_mask.mean()) if self.confident_rust_mask.size else 0.0
+
+    @property
+    def is_metal_surface(self) -> bool:
+        """Metal first; a fully corroded object may pass on confident rust alone."""
+        return (
+            self.confident_metal_ratio >= MIN_SURFACE_AREA_RATIO
+            or self.confident_rust_ratio >= MIN_SURFACE_AREA_RATIO
+        )
+
+    @property
+    def rust_percentage(self) -> float:
+        surface = self.surface_mask
+        surface_pixels = int(surface.sum())
+        if surface_pixels == 0:
+            return 0.0
+        rust_pixels = int((self.measured_rust_mask & surface).sum())
+        return round(rust_pixels / surface_pixels * 100, 2)
+
+
+def _segment_surface(image: np.ndarray) -> SurfaceSegmentation:
+    """Find the metal surface with the segmentation model, then measure rust inside it."""
+    height, width = image.shape[:2]
+    scale = min(1.0, INFERENCE_MAX_SIDE / max(height, width))
+    if scale < 1.0:
+        work_image = cv2.resize(
+            image,
+            (max(1, round(width * scale)), max(1, round(height * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+    else:
+        work_image = image
+    work_height, work_width = work_image.shape[:2]
+
+    result = model.predict(
+        source=work_image,
+        conf=MODEL_CONFIDENCE,
+        iou=MODEL_IOU,
+        imgsz=MODEL_IMAGE_SIZE,
+        retina_masks=True,
+        verbose=False,
+    )[0]
+
+    shape = (work_height, work_width)
+    metal_mask = np.zeros(shape, dtype=bool)
+    rust_mask = np.zeros(shape, dtype=bool)
+    confident_metal_mask = np.zeros(shape, dtype=bool)
+    confident_rust_mask = np.zeros(shape, dtype=bool)
+    model_rust_boxes: list[int] = []
+    if result.masks is None or result.boxes is None or len(result.boxes) == 0:
+        return SurfaceSegmentation(
+            metal_mask,
+            rust_mask,
+            [],
+            confident_metal_mask,
+            confident_rust_mask,
+            np.zeros(shape, dtype=bool),
+        )
+
+    classes = result.boxes.cls.cpu().numpy().astype(int)
+    confidences = result.boxes.conf.cpu().numpy()
+    boxes = result.boxes.xyxy.cpu().numpy()
+    masks = result.masks.data.cpu().numpy() > 0.5
+    for class_id, confidence, box, mask in zip(classes, confidences, boxes, masks):
+        if mask.shape != shape:
+            mask = cv2.resize(
+                mask.astype(np.uint8),
+                (work_width, work_height),
+                interpolation=cv2.INTER_NEAREST,
+            ).astype(bool)
+        is_confident = confidence >= VALIDATION_CONFIDENCE
+        if class_id == METAL_CLASS_ID:
+            metal_mask |= mask
+            if is_confident:
+                confident_metal_mask |= mask
+        elif class_id == RUST_CLASS_ID:
+            rust_mask |= mask
+            if is_confident:
+                confident_rust_mask |= mask
+            x1, y1, x2, y2 = (box / scale).tolist()
+            model_rust_boxes.extend(
+                [
+                    int(np.clip(round(x1), 0, width)),
+                    int(np.clip(round(y1), 0, height)),
+                    int(np.clip(round(x2), 0, width)),
+                    int(np.clip(round(y2), 0, height)),
+                ]
+            )
+
+    surface_mask = metal_mask | rust_mask
+    if RUST_MEASUREMENT == "color":
+        # The model locates the metal; rust-coloured pixels inside it are counted.
+        measured_rust_mask = colour_rust_mask(work_image, surface_mask)
+        rust_boxes = rust_patch_boxes(
+            measured_rust_mask, int(surface_mask.sum()), scale, width, height
+        )
+    else:
+        measured_rust_mask = rust_mask
+        rust_boxes = model_rust_boxes
+
+    return SurfaceSegmentation(
+        metal_mask,
+        rust_mask,
+        rust_boxes,
+        confident_metal_mask,
+        confident_rust_mask,
+        measured_rust_mask,
+    )
+
+
 def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
     rust_percentage = float(scan["rust_percentage"])
-    report = prediction_engine.analyze_scan(rust_percentage, "Hardware")
+    # Scans saved before migration 002 have no distribution/lighting columns.
+    report = prediction_engine.analyze_scan(
+        rust_percentage, "Hardware", scan.get("distribution_type")
+    )
     image_url = str(scan["image_url"])
     filename = image_url.rsplit("/", 1)[-1].split("?", 1)[0] or "image"
     return _scan_response(
@@ -206,13 +375,34 @@ def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
         filename=filename,
         image_url=image_url,
         rust_percentage=rust_percentage,
-        astm_grade=report["astm_grade"],
-        priority_level=report["priority_tier"],
-        recommendation=report["remediation_protocol"],
+        report=report,
         box_coordinates=scan.get("box_coordinates") or [],
         user_id=scan.get("user_id"),
         title=scan.get("title") or filename,
+        lighting_status=scan.get("lighting_status"),
     )
+
+
+# Columns added by migrations/002_add_distribution_and_lighting.sql.
+SCAN_ANALYSIS_COLUMNS = ("distribution_type", "lighting_status", "days_to_critical")
+
+
+def _insert_scan(payload: dict[str, Any]) -> Any:
+    """Insert a scan row; if migration 002 has not been run yet, retry without its columns."""
+    try:
+        return supabase.table("scans").insert(payload).execute()
+    except Exception as exc:
+        message = str(exc)
+        if not any(column in message for column in SCAN_ANALYSIS_COLUMNS):
+            raise
+        logger.warning(
+            "scans table is missing the migration 002 columns; saving the scan without "
+            "distribution/lighting data. Run backend/migrations/002_add_distribution_and_lighting.sql."
+        )
+        base_payload = {
+            key: value for key, value in payload.items() if key not in SCAN_ANALYSIS_COLUMNS
+        }
+        return supabase.table("scans").insert(base_payload).execute()
 
 
 @app.post("/analyze-asset")
@@ -246,37 +436,64 @@ async def analyze_corrosion(
     if image is None or image.size == 0:
         raise HTTPException(status_code=400, detail="The uploaded file is not a valid image.")
 
-    height, width = image.shape[:2]
-    total_image_pixels = height * width
+    # Environmental lighting check: unusable exposures are rejected before inference,
+    # borderline ones are analysed and flagged in the response.
+    lighting = assess_lighting(image)
+    if not lighting.is_usable:
+        too_dark = lighting.status == "too_dark"
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "poor_lighting",
+                "message": (
+                    "This photo is too dark to analyze reliably. Retake it in brighter, even light."
+                    if too_dark
+                    else "This photo is too bright or has too much glare to analyze reliably. "
+                    "Retake it without direct light or flash on the surface."
+                ),
+            },
+        )
+
     try:
-        results = model.predict(source=image, conf=0.20, iou=0.45)
+        segmentation = _segment_surface(image)
     except Exception as exc:
         logger.exception("Corrosion model inference failed")
         raise HTTPException(
             status_code=503,
             detail="The corrosion model could not analyze this image.",
         ) from exc
-    boxes = results[0].boxes.xyxy.cpu().numpy().astype(int)
 
-    rust_mask = np.zeros((height, width), dtype=np.uint8)
-    for x1, y1, x2, y2 in boxes:
-        pad_x1, pad_y1 = max(0, x1 - PADDING), max(0, y1 - PADDING)
-        pad_x2, pad_y2 = min(width, x2 + PADDING), min(height, y2 + PADDING)
-        roi = image[pad_y1:pad_y2, pad_x1:pad_x2]
-        hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        mask = cv2.bitwise_or(
-            cv2.inRange(hsv_roi, LOWER_RUST1, UPPER_RUST1),
-            cv2.inRange(hsv_roi, LOWER_RUST2, UPPER_RUST2),
-        )
-        rust_mask[pad_y1:pad_y2, pad_x1:pad_x2] = cv2.bitwise_or(
-            rust_mask[pad_y1:pad_y2, pad_x1:pad_x2], mask
+    # Error dropping: reject images where no metal (or rusted metal) surface is found,
+    # before anything is uploaded or saved.
+    if not segmentation.is_metal_surface:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "not_metal",
+                "message": (
+                    "No metal surface was detected in this image. "
+                    "Upload a photo where the metal surface fills most of the frame."
+                ),
+            },
         )
 
-    rust_percentage = round(
-        (cv2.countNonZero(rust_mask) / total_image_pixels) * 100, 2
+    # Rust coverage is measured against the detected metal surface, not the whole photo
+    # (see RUST_MEASUREMENT for how rust pixels inside the surface are counted).
+    rust_percentage = segmentation.rust_percentage
+    flat_boxes = segmentation.rust_boxes
+    distribution = classify_distribution(
+        segmentation.measured_rust_mask, segmentation.surface_mask
     )
-    flat_boxes = boxes.flatten().tolist()
-    report = prediction_engine.analyze_scan(rust_percentage, asset_category)
+    report = prediction_engine.analyze_scan(
+        rust_percentage, asset_category, distribution["type"]
+    )
+    logger.info(
+        "Scan analysed: rust=%.2f%% rating=%s lighting=%s geometry=%s",
+        rust_percentage,
+        report["astm_rating"],
+        lighting.status,
+        distribution,
+    )
     filename = file.filename or "image.jpg"
     file_extension = ".jpg" if file.content_type == "image/jpeg" else ".png"
     storage_path = f"scans/{user['id']}/{uuid4()}{file_extension}"
@@ -301,9 +518,12 @@ async def analyze_corrosion(
         "title": normalized_title,
         "rust_percentage": rust_percentage,
         "box_coordinates": flat_boxes,
+        "distribution_type": distribution["type"],
+        "lighting_status": lighting.status,
+        "days_to_critical": report["days_to_critical"],
     }
     try:
-        inserted = supabase.table("scans").insert(supabase_payload).execute()
+        inserted = _insert_scan(supabase_payload)
     except Exception as exc:
         try:
             supabase.storage.from_(SUPABASE_STORAGE_BUCKET).remove([storage_path])
@@ -324,20 +544,19 @@ async def analyze_corrosion(
         filename=filename,
         image_url=signed_url,
         rust_percentage=rust_percentage,
-        astm_grade=report["astm_grade"],
-        priority_level=report["priority_tier"],
-        recommendation=report["remediation_protocol"],
+        report=report,
         box_coordinates=flat_boxes,
         user_id=user["id"],
         signed_url=signed_url,
         title=normalized_title,
+        lighting_status=lighting.status,
     )
 
 @app.get("/history")
 def history(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
     response = (
         supabase.table("scans")
-        .select("id,user_id,image_url,title,rust_percentage,box_coordinates,created_at")
+        .select("*")  # "*" also returns the optional migration 002 columns when present
         .eq("user_id", user["id"])
         .order("created_at", desc=True)
         .execute()
@@ -357,7 +576,7 @@ def update_history_scan(
 
     existing = (
         supabase.table("scans")
-        .select("id,user_id,image_url,title,rust_percentage,box_coordinates,created_at")
+        .select("*")  # "*" also returns the optional migration 002 columns when present
         .eq("id", str(scan_id))
         .eq("user_id", user["id"])
         .maybe_single()

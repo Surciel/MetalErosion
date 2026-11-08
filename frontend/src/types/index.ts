@@ -24,6 +24,8 @@ export type AnalysisPhase =
 export type AnalysisErrorKind =
   | "session-expired"
   | "invalid-image"
+  | "not-metal"
+  | "poor-lighting"
   | "request-timeout"
   | "network-unavailable"
   | "server-failure"
@@ -68,6 +70,14 @@ export interface AdminMetrics {
   selectedRangeScans: number
 }
 
+/** ASTM D610 rust distribution: Spot, General, Pinpoint, Hybrid. */
+export type DistributionType = "S" | "G" | "P" | "H"
+
+/** Environmental lighting of the analysed photo (rejected exposures never produce a result). */
+export type LightingStatus = "ok" | "low_light" | "overexposed"
+
+export type SeverityLevel = "none" | "low" | "moderate" | "high" | "critical"
+
 export interface ScanResult {
   id: string
   imageUrl: string
@@ -75,6 +85,11 @@ export interface ScanResult {
   title?: string
   rustPercent: number
   astmGrade: number
+  /** ASTM D610 notation combining grade and distribution, e.g. "5-S". */
+  astmRating: string
+  distributionType: DistributionType | null
+  daysToCritical: number | null
+  lightingStatus: LightingStatus | null
   priorityLevel: string
   classification: string
   classificationLabel: string
@@ -93,6 +108,10 @@ export interface AnalysisResponse {
   title?: string | null
   rust_percentage: number
   astm_grade: number
+  astm_rating?: string | null
+  distribution_type?: string | null
+  days_to_critical?: number | null
+  lighting_status?: string | null
   priority_level: string
   recommendation: string
   box_coordinates: number[]

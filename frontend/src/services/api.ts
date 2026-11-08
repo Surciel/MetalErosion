@@ -4,10 +4,24 @@ import type {
   AnalyzeCorrosionOptions,
   AnalysisResponse,
   AnalysisErrorKind,
+  DistributionType,
+  LightingStatus,
   MetricRange,
   RecoveryRequest,
   ScanResult,
 } from "@/types"
+import { classificationExplanation, rustExplanation } from "@/utils/classificationInfo"
+
+const DISTRIBUTION_TYPES: ReadonlyArray<DistributionType> = ["S", "G", "P", "H"]
+const LIGHTING_STATUSES: ReadonlyArray<LightingStatus> = ["ok", "low_light", "overexposed"]
+
+function toDistributionType(value: string | null | undefined): DistributionType | null {
+  return DISTRIBUTION_TYPES.find((type) => type === value) ?? null
+}
+
+function toLightingStatus(value: string | null | undefined): LightingStatus | null {
+  return LIGHTING_STATUSES.find((status) => status === value) ?? null
+}
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000"
 
@@ -32,10 +46,15 @@ export class AnalysisRequestError extends Error {
   }
 }
 
-async function parseErrorMessage(response: Response): Promise<string> {
+type ParsedError = {
+  message: string
+  code?: string
+}
+
+async function parseError(response: Response): Promise<ParsedError> {
   const body = await response.text()
 
-  if (!body) return `Request failed with status ${response.status}.`
+  if (!body) return { message: `Request failed with status ${response.status}.` }
 
   const contentType = response.headers.get("content-type") ?? ""
   if (contentType.includes("application/json")) {
@@ -44,15 +63,30 @@ async function parseErrorMessage(response: Response): Promise<string> {
       if (typeof payload === "object" && payload !== null) {
         const detail = "detail" in payload ? payload.detail : undefined
         const message = "message" in payload ? payload.message : undefined
-        if (typeof detail === "string") return detail
-        if (typeof message === "string") return message
+        if (typeof detail === "string") return { message: detail }
+        // Structured errors: { detail: { code, message } }
+        if (typeof detail === "object" && detail !== null) {
+          const detailMessage = "message" in detail ? detail.message : undefined
+          const detailCode = "code" in detail ? detail.code : undefined
+          if (typeof detailMessage === "string") {
+            return {
+              message: detailMessage,
+              code: typeof detailCode === "string" ? detailCode : undefined,
+            }
+          }
+        }
+        if (typeof message === "string") return { message }
       }
     } catch {
       // Fall through to the raw response body when JSON is malformed.
     }
   }
 
-  return body
+  return { message: body }
+}
+
+async function parseErrorMessage(response: Response): Promise<string> {
+  return (await parseError(response)).message
 }
 
 async function throwApiError(response: Response): Promise<never> {
@@ -84,6 +118,10 @@ function mapAnalysisResponse(
   previewImageUrl = "",
 ): ScanResult {
   const createdAt = data.created_at ?? new Date().toISOString()
+  const distributionType = toDistributionType(data.distribution_type)
+  const astmRating = data.astm_rating ?? String(data.astm_grade)
+  const daysToCritical =
+    typeof data.days_to_critical === "number" ? data.days_to_critical : null
 
   return {
     id: String(data.scan_id ?? createdAt),
@@ -92,10 +130,21 @@ function mapAnalysisResponse(
     title: data.title ?? undefined,
     rustPercent: data.rust_percentage,
     astmGrade: data.astm_grade,
+    astmRating,
+    distributionType,
+    daysToCritical,
+    lightingStatus: toLightingStatus(data.lighting_status),
     priorityLevel: data.priority_level,
-    classification: `ASTM Grade ${data.astm_grade}`,
+    classification: `ASTM ${astmRating}`,
     classificationLabel: data.priority_level,
     dss: data.recommendation,
+    rustExplanation: rustExplanation(data.rust_percentage, distributionType),
+    classificationExplanation: classificationExplanation(
+      data.astm_grade,
+      astmRating,
+      data.priority_level,
+      daysToCritical,
+    ),
     boxCoordinates: data.box_coordinates ?? [],
     date: new Date(createdAt).toLocaleDateString("en-US", {
       month: "short",
@@ -161,10 +210,15 @@ export async function analyzeCorrosion(
           false,
         )
       }
-      if (response.status === 400) {
+      if (response.status === 400 || response.status === 422) {
+        const parsed = await parseError(response)
         throw new AnalysisRequestError(
-          "invalid-image",
-          await parseErrorMessage(response),
+          parsed.code === "not_metal"
+            ? "not-metal"
+            : parsed.code === "poor_lighting"
+              ? "poor-lighting"
+              : "invalid-image",
+          parsed.message,
           false,
         )
       }

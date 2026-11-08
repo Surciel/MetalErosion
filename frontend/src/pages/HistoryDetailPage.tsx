@@ -2,7 +2,16 @@ import { useEffect, useState } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import BoundingBoxImage from "@/components/BoundingBoxImage"
+import {
+  AstmGradeTooltip,
+  DistributionTooltip,
+  DssTooltip,
+  PriorityTooltip,
+  RustPercentTooltip,
+} from "@/components/ClassificationTooltips"
+import LightingNotice from "@/components/LightingNotice"
 import { severityColor } from "@/utils/severity"
+import { distributionName } from "@/utils/classificationInfo"
 import type { ScanResult, View } from "@/types"
 
 export default function HistoryDetailPage({
@@ -12,6 +21,7 @@ export default function HistoryDetailPage({
   onBack,
   onNavigate,
   onDelete,
+  onEdit,
 }: {
   username: string
   scan: ScanResult
@@ -29,7 +39,7 @@ export default function HistoryDetailPage({
   const [titleValue, setTitleValue] = useState(scan.title || scan.imageName)
   const [editPending, setEditPending] = useState(false)
   const safeHistory = history ?? []
-  const color = severityColor(displayed.rustPercent)
+  const color = severityColor(displayed)
 
   useEffect(() => {
     setDisplayed(scan)
@@ -115,7 +125,7 @@ export default function HistoryDetailPage({
 
           <div className="flex flex-col gap-1 p-1.5">
             {safeHistory.map((s, i) => {
-              const sc = severityColor(s.rustPercent)
+              const sc = severityColor(s)
               const isActive = s.id === displayed.id
               return (
                 <button
@@ -181,6 +191,7 @@ export default function HistoryDetailPage({
             className="py-10 px-8"
             style={{ background: "var(--color-bg)" }}
           >
+            <LightingNotice status={displayed.lightingStatus} className="max-w-4xl mx-auto mb-6" />
             <div className="max-w-4xl mx-auto flex gap-6">
               {/* Image */}
               <div className="flex-1 min-w-0">
@@ -237,6 +248,7 @@ export default function HistoryDetailPage({
                 >
                   <p className="text-xs text-white/50 font-mono uppercase tracking-wider">
                     Corrosion %
+                    <RustPercentTooltip align="right" />
                   </p>
                   <p
                     className="text-4xl font-bold leading-none"
@@ -245,11 +257,14 @@ export default function HistoryDetailPage({
                     {displayed.rustPercent}
                     <span className="text-xl">%</span>
                   </p>
-                  <span
-                    className="text-xs px-2 py-0.5 rounded-full font-medium self-start"
-                    style={{ background: color + "22", color }}
-                  >
-                    {displayed.classificationLabel}
+                  <span className="flex items-center self-start">
+                    <span
+                      className="text-xs px-2 py-0.5 rounded-full font-medium"
+                      style={{ background: color + "22", color }}
+                    >
+                      {displayed.classificationLabel}
+                    </span>
+                    <PriorityTooltip priority={displayed.priorityLevel} align="right" />
                   </span>
                 </div>
 
@@ -259,12 +274,17 @@ export default function HistoryDetailPage({
                 >
                   <p className="text-xs text-white/50 font-mono uppercase tracking-wider">
                     Classification
+                    <AstmGradeTooltip grade={displayed.astmGrade} align="right" />
                   </p>
                   <p
                     className="text-3xl font-bold text-white leading-none"
                     style={{ fontFamily: "JetBrains Mono" }}
                   >
                     {displayed.classification}
+                  </p>
+                  <p className="flex items-center text-xs text-white/60">
+                    Distribution: {distributionName(displayed.distributionType)}
+                    <DistributionTooltip type={displayed.distributionType} align="right" />
                   </p>
                   <span
                     className="text-xs px-2 py-0.5 rounded-full font-medium self-start"
@@ -292,6 +312,7 @@ export default function HistoryDetailPage({
                   <div>
                     <p className="text-xs text-white/40 font-mono uppercase tracking-wider mb-1">
                       Corrosion %
+                      <RustPercentTooltip />
                     </p>
                     <p
                       className="text-3xl font-bold font-mono"
@@ -316,6 +337,7 @@ export default function HistoryDetailPage({
                   <div>
                     <p className="text-xs text-white/40 font-mono uppercase tracking-wider mb-1">
                       Classification
+                      <AstmGradeTooltip grade={displayed.astmGrade} align="right" />
                     </p>
                     <p className="text-3xl font-bold text-white font-mono">
                       {displayed.classification}
@@ -337,6 +359,7 @@ export default function HistoryDetailPage({
               >
                 <p className="text-xs text-white/40 font-mono uppercase tracking-wider">
                   DECISION SUPPORT SYSTEM
+                  <DssTooltip />
                 </p>
                 <p className="text-sm text-white/80 leading-relaxed">
                   {displayed.dss}

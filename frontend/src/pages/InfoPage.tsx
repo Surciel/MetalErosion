@@ -2,7 +2,15 @@ import { useState } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import PageGrid from "@/components/PageGrid"
+import {
+  AstmGradeTooltip,
+  DistributionTooltip,
+  DssTooltip,
+  PriorityTooltip,
+  RustPercentTooltip,
+} from "@/components/ClassificationTooltips"
 import { severityColor } from "@/utils/severity"
+import { distributionName } from "@/utils/classificationInfo"
 import type { ScanResult, View } from "@/types"
 
 export default function InfoPage({
@@ -21,7 +29,7 @@ export default function InfoPage({
   onNavigate: (v: View) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const color = severityColor(result.rustPercent)
+  const color = severityColor(result)
 
   return (
     <div
@@ -61,9 +69,15 @@ export default function InfoPage({
                   <div>
                     <p className="text-xs text-white/50 uppercase tracking-wider font-mono">
                       Surface Coverage
+                      <RustPercentTooltip />
                     </p>
-                    <p className="text-sm text-white/80 mt-1">
-                      {result.classificationLabel} corrosion level
+                    <p className="flex items-center text-sm text-white/80 mt-1">
+                      {result.classificationLabel}
+                      <PriorityTooltip priority={result.priorityLevel} />
+                    </p>
+                    <p className="flex items-center text-xs text-white/60 mt-1">
+                      Distribution: {distributionName(result.distributionType)}
+                      <DistributionTooltip type={result.distributionType} />
                     </p>
                   </div>
                 </>
@@ -78,9 +92,15 @@ export default function InfoPage({
                   <div>
                     <p className="text-xs text-white/50 uppercase tracking-wider font-mono">
                       Classification
+                      <AstmGradeTooltip grade={result.astmGrade} />
                     </p>
-                    <p className="text-sm mt-1" style={{ color }}>
+                    <p className="flex items-center text-sm mt-1" style={{ color }}>
                       {result.classificationLabel}
+                      <PriorityTooltip priority={result.priorityLevel} />
+                    </p>
+                    <p className="flex items-center text-xs text-white/60 mt-1">
+                      Distribution: {distributionName(result.distributionType)}
+                      <DistributionTooltip type={result.distributionType} />
                     </p>
                   </div>
                 </>
@@ -113,6 +133,7 @@ export default function InfoPage({
               >
                 <p className="text-xs text-white/50 uppercase tracking-wider font-mono mb-3">
                   Decision Support System
+                  <DssTooltip />
                 </p>
                 <p className="text-sm text-white/85 leading-relaxed">
                   {result.dss}

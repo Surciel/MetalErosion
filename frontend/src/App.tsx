@@ -8,6 +8,7 @@ import InfoPage from "@/pages/InfoPage"
 import HistoryPage from "@/pages/HistoryPage"
 import HistoryDetailPage from "@/pages/HistoryDetailPage"
 import AdminPage from "@/pages/AdminPage"
+import SeverityAlert from "@/components/SeverityAlert"
 import type { User } from "@supabase/supabase-js"
 import {
   getAdminAccounts,
@@ -64,6 +65,12 @@ export default function App() {
   const [historyError, setHistoryError] = useState("")
   const [selectedHistoryScan, setSelectedHistoryScan] =
     useState<ScanResult | null>(null)
+  // Severity pop-up for a freshly analysed scan only (never for history browsing).
+  const [alertResult, setAlertResult] = useState<ScanResult | null>(null)
+
+  useEffect(() => {
+    if (view !== "results") setAlertResult(null)
+  }, [view])
 
   const accountFromUser = (user: User): Account => {
     const email = user.email ?? ""
@@ -328,12 +335,13 @@ export default function App() {
     setView("calculating")
   }
 
-    const handleCalculationDone = (result: ScanResult) => {
+  const handleCalculationDone = (result: ScanResult) => {
     setCurrentResult(result)
     setSessionScans((prev) => [...prev, result])
     setHistory((prev) => [result, ...prev.filter((scan) => scan.id !== result.id)])
     setSelectedHistoryScan(result)
-      setView("results")
+    setAlertResult(result)
+    setView("results")
   }
 
   const handleSelectHistoryScan = (scan: ScanResult) => {
@@ -566,14 +574,22 @@ export default function App() {
       )
     case "results":
       return currentResult ? (
-        <ResultsPage
-          username={username}
-          result={currentResult}
-          sessionScans={sessionScans}
-          onNavigate={setView}
-          onClose={() => setView("home")}
-          onUpload={handleUpload}
-        />
+        <>
+          <ResultsPage
+            username={username}
+            result={currentResult}
+            sessionScans={sessionScans}
+            onNavigate={setView}
+            onClose={() => setView("home")}
+            onUpload={handleUpload}
+          />
+          {alertResult && (
+            <SeverityAlert
+              result={alertResult}
+              onClose={() => setAlertResult(null)}
+            />
+          )}
+        </>
       ) : null
     case "rust-info":
       return currentResult ? (

@@ -4,7 +4,16 @@ import SideMenu from "@/components/SideMenu"
 import PageGrid from "@/components/PageGrid"
 import ScanPreparationModal from "@/components/ScanPreparationModal"
 import BoundingBoxImage from "@/components/BoundingBoxImage"
+import {
+  AstmGradeTooltip,
+  DistributionTooltip,
+  DssTooltip,
+  PriorityTooltip,
+  RustPercentTooltip,
+} from "@/components/ClassificationTooltips"
+import LightingNotice from "@/components/LightingNotice"
 import { severityColor } from "@/utils/severity"
+import { distributionName } from "@/utils/classificationInfo"
 import type { ScanResult, View } from "@/types"
 
 type SeverityBadgeProps = {
@@ -93,7 +102,7 @@ export default function ResultsPage({
     }
   }
 
-  const color = severityColor(displayed.rustPercent)
+  const color = severityColor(displayed)
 
   const moveSelection = (direction: "left" | "right") => {
     const currentIndex = sessionScans.findIndex(
@@ -157,6 +166,7 @@ export default function ResultsPage({
       <div className="flex-1 overflow-y-auto">
         {/* ── Section 1: Overview ───────────────────────────────────── */}
         <section className="py-10" style={{ background: "var(--color-bg)" }}>
+          <LightingNotice status={displayed.lightingStatus} className="mx-auto mb-6 max-w-5xl px-4" />
           <PageGrid className="px-4">
             {/* Left: image — cols 1–6 */}
             <div style={{ gridColumn: "1 / 7" }}>
@@ -242,6 +252,7 @@ export default function ResultsPage({
               >
                 <p className="text-xs text-white/50 font-mono uppercase tracking-wider">
                   Corrosion %
+                  <RustPercentTooltip />
                 </p>
                 <p
                   className="text-5xl font-bold leading-none"
@@ -250,10 +261,13 @@ export default function ResultsPage({
                   {displayed.rustPercent}
                   <span className="text-2xl">%</span>
                 </p>
-                <SeverityBadge
-                  label={displayed.classificationLabel}
-                  color={color}
-                />
+                <span className="flex items-center">
+                  <SeverityBadge
+                    label={displayed.classificationLabel}
+                    color={color}
+                  />
+                  <PriorityTooltip priority={displayed.priorityLevel} />
+                </span>
               </div>
 
               {/* Classification overview */}
@@ -263,12 +277,17 @@ export default function ResultsPage({
               >
                 <p className="text-xs text-white/50 font-mono uppercase tracking-wider">
                   Classification
+                  <AstmGradeTooltip grade={displayed.astmGrade} align="right" />
                 </p>
                 <p
                   className="text-4xl font-bold text-white leading-none"
                   style={{ fontFamily: "JetBrains Mono" }}
                 >
                   {displayed.classification}
+                </p>
+                <p className="flex items-center text-xs text-white/60">
+                  Distribution: {distributionName(displayed.distributionType)}
+                  <DistributionTooltip type={displayed.distributionType} align="right" />
                 </p>
                 <SeverityBadge
                   label={displayed.classificationLabel}
@@ -302,7 +321,7 @@ export default function ResultsPage({
                   style={{ scrollbarWidth: "none" }}
                 >
                   {sessionScans.map((scan) => {
-                    const sc = severityColor(scan.rustPercent)
+                    const sc = severityColor(scan)
                     const isActive = scan.id === displayed.id
                     return (
                       <button
@@ -369,6 +388,7 @@ export default function ResultsPage({
               <div>
                 <p className="text-xs text-white/40 font-mono uppercase tracking-wider mb-1">
                   Corrosion %
+                  <RustPercentTooltip />
                 </p>
                 <p className="text-3xl font-bold font-mono" style={{ color }}>
                   {displayed.rustPercent}%
@@ -391,6 +411,7 @@ export default function ResultsPage({
               <div>
                 <p className="text-xs text-white/40 font-mono uppercase tracking-wider mb-1">
                   Classification
+                  <AstmGradeTooltip grade={displayed.astmGrade} align="right" />
                 </p>
                 <p className="text-3xl font-bold text-white font-mono">
                   {displayed.classification}
@@ -414,6 +435,7 @@ export default function ResultsPage({
             >
               <p className="text-xs text-white/40 font-mono uppercase tracking-wider">
                 DECISION SUPPORT SYSTEM
+                <DssTooltip />
               </p>
               <p className="text-sm text-white/80 leading-relaxed">
                 {displayed.dss}
@@ -471,11 +493,11 @@ export default function ResultsPage({
             setPendingFile(null)
             setPendingUrl("")
           }}
-          onConfirm={(croppedFile, previewUrl, title) => {
+          onConfirm={(scanFile, previewUrl, title) => {
             URL.revokeObjectURL(pendingUrl)
             setPendingFile(null)
             setPendingUrl("")
-            onUpload(croppedFile, previewUrl, title)
+            onUpload(scanFile, previewUrl, title)
           }}
         />
       )}

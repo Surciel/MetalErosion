@@ -144,11 +144,11 @@ export default function HomePage({
             setPendingFile(null)
             setPendingUrl("")
           }}
-          onConfirm={(croppedFile, previewUrl, title) => {
+          onConfirm={(scanFile, previewUrl, title) => {
             URL.revokeObjectURL(pendingUrl)
             setPendingFile(null)
             setPendingUrl("")
-            onUpload(croppedFile, previewUrl, title)
+            onUpload(scanFile, previewUrl, title)
           }}
         />
       )}

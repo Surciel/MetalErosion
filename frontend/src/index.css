@@ -49,10 +49,45 @@
   transform-origin: center;
 }
 
+/* Severity alert pop-up (Tailwind v4 centers it with the `translate` property,
+   so these keyframes can use `transform` without conflicting). */
+@keyframes severity-alert-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes severity-alert-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px #c0392b88, 0 20px 50px rgba(0, 0, 0, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 6px #c0392b55, 0 20px 50px rgba(0, 0, 0, 0.5);
+  }
+}
+
+.severity-alert {
+  animation: severity-alert-in 0.25s ease-out;
+}
+
+.severity-alert-critical {
+  animation:
+    severity-alert-in 0.25s ease-out,
+    severity-alert-pulse 1.2s ease-in-out 0.25s 4;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .analysis-progress-indicator,
   .analysis-orbit,
-  .analysis-spinner {
+  .analysis-spinner,
+  .severity-alert,
+  .severity-alert-critical {
     animation: none;
   }
 }
