@@ -23,7 +23,8 @@ const LIGHTING_LABELS: Record<string, string> = {
 }
 
 const REJECTION_LABELS: Record<string, string> = {
-  not_metal: "Not metal",
+  not_metal_classifier: "Not metal (classifier)",
+  not_metal: "No metal area found",
   too_dark: "Too dark",
   too_bright: "Too bright",
   too_blurry: "Too blurry",

@@ -489,6 +489,71 @@ Charts are in three places. Each chart card has a **Show table** button with the
 - [ ] Side menu → **Analytics**: tiles and four charts; changing the period changes all of them; **Show table** works.
 - [ ] Admin page: the analytics section loads, and the period filter updates every chart.
 
+### Metal classifier and hybrid rust measurement (hierarchical classification)
+This is the colleague's backend update, merged into our `main.py` (not overwritten, so the spread slope, validations and analytics are kept). It **supersedes the threshold table in Step 2 above**: the tested configuration uses one detection confidence, 0.15, for metal and rust.
+
+**The pipeline is now a hierarchy.** Each level runs only if the one before it passed.
+
+| Level | Question | Decided by |
+|---|---|---|
+| 1 | Is this a photo of metal? | Metal classifier `models/metal_cls.pt` (YOLO26s-cls), probability ≥ 0.4 |
+| 2 | Where is the metal, and where is rust on it? | Segmentation model `models/best.pt` |
+| 3 | How much of the metal is rusted? | Hybrid measurement: rust-coloured pixels, counted only in or near areas the model marked as rust |
+| 4 | How severe? | ASTM D610 grade table |
+| 5 | How is it spread? | Geometric spread analysis |
+| 6 | How urgent? | Regression on rust %, category and spread |
+
+Levels 1 and 2 are trained models; levels 3 to 6 are measurements and rules.
+
+**Settings in `backend/.env`** (already added; add the same three in the Render dashboard):
+```
+RUST_MEASUREMENT=hybrid
+METAL_CLASSIFIER_THRESHOLD=0.4
+MODEL_CONFIDENCE=0.15
+```
+Do not set `METAL_CONFIDENCE`, `RUST_CONFIDENCE`, `VALIDATION_CONFIDENCE` or `HYBRID_REACH`; their defaults are the tested values. If `metal_cls.pt` is missing, the backend still runs without level 1.
+
+**Results reproduced with the merged backend on the 105 test images** (81 metal, 24 non-metal):
+
+| | Before | Now |
+|---|---|---|
+| Non-metal rejected | 18 of 24 (75.0%) | 21 of 24 (87.5%) |
+| Metal accepted | 75 of 81 (92.6%) | 74 of 81 (91.4%) |
+| Gate accuracy | 88.6% | 90.5% |
+| ASTM grade vs hand labels | 45.3% exact (colour mode) | 73.0% exact, 87.8% within one grade |
+
+The "Now" column was re-measured on this machine and matches the colleague's figures exactly. Our added size and blur checks reject none of the 105 images.
+
+**Two alternatives were measured and not adopted** (same test set):
+
+| Setting change | Metal accepted | Non-metal rejected | Grade exact | Clean metal given rust | Effect on our scan photos |
+|---|---|---|---|---|---|
+| Tested configuration | 74 of 81 | 21 of 24 | 73.0% | 2 of 10 | Scissors read 0% |
+| `RUST_CONFIDENCE=0.10` | 74 of 81 | 21 of 24 | 70.3% | 3 of 10 | Scissors read 51.3% |
+| `VALIDATION_CONFIDENCE=0.15` | 78 of 81 | 21 of 24 | 69.2% | 2 of 10 | Wrench accepted but read as 0% rust |
+
+**Known limitations** (state these at the defense):
+- Close-up non-metal textures (fabric, leather, paper) can still be accepted.
+- Plain metal filling the whole frame, with no edges or background, can be rejected.
+- **Rust the model is not confident about is read as 0%.** The rusted scissors photo (`remove-rust-from-tools-01`) reads 0% and the pruner's rusty blade reads 0%, because the model's rust detection on them is below 0.15.
+- Fine scattered rust and almost completely rusted surfaces are underestimated.
+- A fully rusted object with no clean metal visible can be rejected at level 2 even when the classifier is sure it is metal (the wrench).
+- At 0.15, two of the ten clean metal test images were given some rust.
+- Copper, brass and bronze can be read as rusted; ASTM D610 applies to steel.
+- Perforation and depth cannot be judged from a photo.
+
+| File | Change |
+|---|---|
+| [`backend/main.py`](backend/main.py) | `hybrid` mode, `MODEL_CONFIDENCE` from the environment, the classifier (`metal_probability`, `passes_metal_classifier`) and its check before segmentation. Classifier rejections are logged as `not_metal_classifier`. |
+| `backend/models/metal_cls.pt` | **New** (10.5 MB). Must be deployed the same way as `best.pt`. |
+| [`backend/evaluate_system.py`](backend/evaluate_system.py) | **New**, the colleague's test tool. `make_figures.py` has not been received, so it skips the charts. |
+| [`backend/.env.example`](backend/.env.example) | The three tested settings and the optional overrides. |
+
+**Check by hand**
+- [ ] A rusty metal photo is accepted with a rust %.
+- [ ] A sunset, forest or person photo shows "This doesn't look like metal."
+- [ ] A clean metal object reads close to 0%.
+
 ---
 
 ## API response changes (analysis and history)

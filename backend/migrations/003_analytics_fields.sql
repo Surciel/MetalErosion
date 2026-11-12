@@ -9,8 +9,8 @@ alter table public.scans
   add column if not exists quality_warnings text[] not null default '{}';
 
 -- Log of rejected scans (no image is stored), used for the admin rejection chart.
--- reason: not_metal | too_dark | too_bright | too_blurry | too_small |
---         unsupported_format | invalid_image
+-- reason: not_metal_classifier (stage 1 classifier) | not_metal (no metal area found) |
+--         too_dark | too_bright | too_blurry | too_small | unsupported_format | invalid_image
 create table if not exists public.scan_rejections (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references auth.users (id) on delete cascade,
