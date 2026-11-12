@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,7 +18,12 @@ from supabase import Client, create_client
 from supabase_auth.errors import AuthError
 from ultralytics import YOLO
 
-from image_quality import assess_lighting
+from image_quality import (
+    MIN_IMAGE_SIDE,
+    assess_lighting,
+    assess_sharpness,
+    detect_image_format,
+)
 from predictive_engine import ISOPredictiveEngine
 from rust_measurement import colour_rust_mask, rust_patch_boxes
 from spread_analysis import classify_distribution
@@ -83,6 +89,15 @@ METAL_CLASS_ID = _class_id("metal")
 RUST_CLASS_ID = _class_id("rust")
 
 MODEL_CONFIDENCE = 0.25
+# Minimum confidence for a metal detection to count as surface. The metal check also
+# needs VALIDATION_CONFIDENCE, so to accept weaker metal lower both settings.
+METAL_CONFIDENCE = float(os.getenv("METAL_CONFIDENCE", "0.25"))
+# Rust detections between RUST_CONFIDENCE and MODEL_CONFIDENCE are kept only where at
+# least RUST_MIN_METAL_OVERLAP of the outline lies on detected metal. This recovers rust
+# the model is unsure about without accepting "rust" on wood, walls or skin.
+# Set RUST_CONFIDENCE to MODEL_CONFIDENCE (0.25) or higher to turn this off.
+RUST_CONFIDENCE = float(os.getenv("RUST_CONFIDENCE", "0.12"))
+RUST_MIN_METAL_OVERLAP = float(os.getenv("RUST_MIN_METAL_OVERLAP", "0.5"))
 MODEL_IOU = 0.45
 MODEL_IMAGE_SIZE = 1024  # Matches the training imgsz of the segmentation model.
 INFERENCE_MAX_SIDE = 1024  # Large photos are downscaled first to bound mask memory.
@@ -101,6 +116,8 @@ RUST_MEASUREMENT = os.getenv("RUST_MEASUREMENT", "color").strip().lower()
 if RUST_MEASUREMENT not in ("color", "mask"):
     raise RuntimeError("RUST_MEASUREMENT must be 'color' or 'mask'.")
 MAX_IMAGE_BYTES = 15 * 1024 * 1024
+# Below this share of the photo, the metal is analysed but flagged as small in the frame.
+SMALL_SURFACE_RATIO = 0.15
 
 
 class MaintenanceRequest(BaseModel):
@@ -207,6 +224,7 @@ def _scan_response(
     signed_url: Optional[str] = None,
     title: Optional[str] = None,
     lighting_status: Optional[str] = None,
+    quality_warnings: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     response = {
         "status": "success",
@@ -218,9 +236,13 @@ def _scan_response(
         "astm_rating": report["astm_rating"],
         "distribution_type": report["distribution_type"],
         "days_to_critical": report["days_to_critical"],
+        "spread_coverage": report["spread_coverage"],
+        "spread_factor": report["spread_factor"],
+        "regression_slope": report["active_regression_slope"],
         "priority_level": report["priority_tier"],
         "recommendation": report["remediation_protocol"],
         "lighting_status": lighting_status,
+        "quality_warnings": list(quality_warnings or []),
         "box_coordinates": box_coordinates,
         "scan_id": str(scan_id) if scan_id is not None else None,
         "created_at": created_at,
@@ -240,6 +262,10 @@ class SurfaceSegmentation:
     confident_rust_mask: np.ndarray  # bool, rust detections >= VALIDATION_CONFIDENCE
     # Rust pixels actually counted for rust % (see RUST_MEASUREMENT), within the surface.
     measured_rust_mask: np.ndarray
+    # Low-confidence rust detections (RUST_CONFIDENCE..MODEL_CONFIDENCE) kept / dropped
+    # by the metal-overlap filter. Logged per scan for threshold tuning.
+    low_conf_rust_kept: int = 0
+    low_conf_rust_dropped: int = 0
 
     @property
     def surface_mask(self) -> np.ndarray:
@@ -287,7 +313,7 @@ def _segment_surface(image: np.ndarray) -> SurfaceSegmentation:
 
     result = model.predict(
         source=work_image,
-        conf=MODEL_CONFIDENCE,
+        conf=min(MODEL_CONFIDENCE, METAL_CONFIDENCE, RUST_CONFIDENCE),
         iou=MODEL_IOU,
         imgsz=MODEL_IMAGE_SIZE,
         retina_masks=True,
@@ -313,32 +339,60 @@ def _segment_surface(image: np.ndarray) -> SurfaceSegmentation:
     classes = result.boxes.cls.cpu().numpy().astype(int)
     confidences = result.boxes.conf.cpu().numpy()
     boxes = result.boxes.xyxy.cpu().numpy()
-    masks = result.masks.data.cpu().numpy() > 0.5
-    for class_id, confidence, box, mask in zip(classes, confidences, boxes, masks):
-        if mask.shape != shape:
-            mask = cv2.resize(
-                mask.astype(np.uint8),
-                (work_width, work_height),
-                interpolation=cv2.INTER_NEAREST,
-            ).astype(bool)
-        is_confident = confidence >= VALIDATION_CONFIDENCE
-        if class_id == METAL_CLASS_ID:
-            metal_mask |= mask
-            if is_confident:
-                confident_metal_mask |= mask
-        elif class_id == RUST_CLASS_ID:
-            rust_mask |= mask
-            if is_confident:
-                confident_rust_mask |= mask
-            x1, y1, x2, y2 = (box / scale).tolist()
-            model_rust_boxes.extend(
-                [
-                    int(np.clip(round(x1), 0, width)),
-                    int(np.clip(round(y1), 0, height)),
-                    int(np.clip(round(x2), 0, width)),
-                    int(np.clip(round(y2), 0, height)),
-                ]
-            )
+    raw_masks = result.masks.data.cpu().numpy() > 0.5
+
+    def _sized(mask: np.ndarray) -> np.ndarray:
+        if mask.shape == shape:
+            return mask
+        return cv2.resize(
+            mask.astype(np.uint8),
+            (work_width, work_height),
+            interpolation=cv2.INTER_NEAREST,
+        ).astype(bool)
+
+    # Pass 1: metal. Detections below METAL_CONFIDENCE are ignored (the prediction runs
+    # at the lowest threshold in use, so they can appear here).
+    for class_id, confidence, mask in zip(classes, confidences, raw_masks):
+        if class_id != METAL_CLASS_ID or confidence < METAL_CONFIDENCE:
+            continue
+        mask = _sized(mask)
+        metal_mask |= mask
+        if confidence >= VALIDATION_CONFIDENCE:
+            confident_metal_mask |= mask
+
+    # Metal slightly grown so rust sitting on the metal's edge still counts as "on metal".
+    edge = max(3, round(max(work_height, work_width) * 0.01))
+    metal_zone = cv2.dilate(
+        metal_mask.astype(np.uint8), np.ones((edge, edge), np.uint8)
+    ).astype(bool)
+
+    # Pass 2: rust.
+    low_conf_rust_kept = 0
+    low_conf_rust_dropped = 0
+    for class_id, confidence, box, mask in zip(classes, confidences, boxes, raw_masks):
+        if class_id != RUST_CLASS_ID or confidence < RUST_CONFIDENCE:
+            continue
+        mask = _sized(mask)
+        if confidence < MODEL_CONFIDENCE:
+            # Low-confidence rust: only where most of the outline lies on detected metal.
+            mask_pixels = int(mask.sum())
+            overlap = int((mask & metal_zone).sum()) / mask_pixels if mask_pixels else 0.0
+            if overlap < RUST_MIN_METAL_OVERLAP:
+                low_conf_rust_dropped += 1
+                continue
+            low_conf_rust_kept += 1
+        rust_mask |= mask
+        if confidence >= VALIDATION_CONFIDENCE:
+            confident_rust_mask |= mask
+        x1, y1, x2, y2 = (box / scale).tolist()
+        model_rust_boxes.extend(
+            [
+                int(np.clip(round(x1), 0, width)),
+                int(np.clip(round(y1), 0, height)),
+                int(np.clip(round(x2), 0, width)),
+                int(np.clip(round(y2), 0, height)),
+            ]
+        )
 
     surface_mask = metal_mask | rust_mask
     if RUST_MEASUREMENT == "color":
@@ -358,14 +412,21 @@ def _segment_surface(image: np.ndarray) -> SurfaceSegmentation:
         confident_metal_mask,
         confident_rust_mask,
         measured_rust_mask,
+        low_conf_rust_kept,
+        low_conf_rust_dropped,
     )
 
 
 def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
     rust_percentage = float(scan["rust_percentage"])
-    # Scans saved before migration 002 have no distribution/lighting columns.
+    # Scans saved before migrations 002/003 have no distribution, lighting or spread
+    # columns; a missing spread keeps the category slope unchanged.
+    spread_coverage = scan.get("spread_coverage")
     report = prediction_engine.analyze_scan(
-        rust_percentage, "Hardware", scan.get("distribution_type")
+        rust_percentage,
+        "Hardware",
+        scan.get("distribution_type"),
+        float(spread_coverage) if spread_coverage is not None else None,
     )
     image_url = str(scan["image_url"])
     filename = image_url.rsplit("/", 1)[-1].split("?", 1)[0] or "image"
@@ -380,29 +441,69 @@ def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
         user_id=scan.get("user_id"),
         title=scan.get("title") or filename,
         lighting_status=scan.get("lighting_status"),
+        quality_warnings=scan.get("quality_warnings"),
     )
 
 
-# Columns added by migrations/002_add_distribution_and_lighting.sql.
-SCAN_ANALYSIS_COLUMNS = ("distribution_type", "lighting_status", "days_to_critical")
+# Columns added by migrations/002_add_distribution_and_lighting.sql and
+# migrations/003_analytics_fields.sql.
+SCAN_ANALYSIS_COLUMNS = (
+    "distribution_type",
+    "lighting_status",
+    "days_to_critical",
+    "spread_coverage",
+    "quality_warnings",
+)
+
+
+def _reject_scan(
+    user: dict[str, Any],
+    code: str,
+    message: str,
+    *,
+    status_code: int = 422,
+    reason: Optional[str] = None,
+) -> HTTPException:
+    """Record why a scan was rejected (for admin analytics) and build the error to raise.
+
+    Logging is best effort: a missing scan_rejections table (migration 003 not run) or a
+    database error never blocks the response.
+    """
+    try:
+        supabase.table("scan_rejections").insert(
+            {"user_id": user["id"], "reason": reason or code}
+        ).execute()
+    except Exception:
+        logger.warning(
+            "Scan rejection '%s' was not logged. Run backend/migrations/003_analytics_fields.sql.",
+            reason or code,
+        )
+    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
 def _insert_scan(payload: dict[str, Any]) -> Any:
-    """Insert a scan row; if migration 002 has not been run yet, retry without its columns."""
-    try:
-        return supabase.table("scans").insert(payload).execute()
-    except Exception as exc:
-        message = str(exc)
-        if not any(column in message for column in SCAN_ANALYSIS_COLUMNS):
-            raise
-        logger.warning(
-            "scans table is missing the migration 002 columns; saving the scan without "
-            "distribution/lighting data. Run backend/migrations/002_add_distribution_and_lighting.sql."
-        )
-        base_payload = {
-            key: value for key, value in payload.items() if key not in SCAN_ANALYSIS_COLUMNS
-        }
-        return supabase.table("scans").insert(base_payload).execute()
+    """Insert a scan row; drop any optional column whose migration has not been run yet."""
+    payload = dict(payload)
+    for _attempt in range(len(SCAN_ANALYSIS_COLUMNS) + 1):
+        try:
+            return supabase.table("scans").insert(payload).execute()
+        except Exception as exc:
+            message = str(exc)
+            missing = [
+                column
+                for column in SCAN_ANALYSIS_COLUMNS
+                if column in payload and column in message
+            ]
+            if not missing:
+                raise
+            logger.warning(
+                "scans table has no %s column; saving the scan without it. "
+                "Run the SQL files in backend/migrations (002 and 003).",
+                ", ".join(missing),
+            )
+            for column in missing:
+                payload.pop(column)
+    raise RuntimeError("The scan could not be saved after removing optional columns.")
 
 
 @app.post("/analyze-asset")
@@ -431,27 +532,58 @@ async def analyze_corrosion(
         raise HTTPException(status_code=400, detail="A scan title is required.")
     if len(normalized_title) > 120:
         raise HTTPException(status_code=400, detail="Scan titles must be 120 characters or fewer.")
+    if asset_category not in prediction_engine.category_slopes:
+        raise HTTPException(
+            status_code=400,
+            detail="Unknown asset category. Use one of: "
+            + ", ".join(prediction_engine.category_slopes)
+            + ".",
+        )
+
+    # The real format comes from the file's bytes, not the browser's content-type header.
+    image_format = detect_image_format(contents)
+    if image_format is None:
+        raise _reject_scan(
+            user, "unsupported_format", "Use a JPEG, PNG or WebP image.", status_code=400
+        )
+    file_extension, content_type = image_format
 
     image = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
     if image is None or image.size == 0:
-        raise HTTPException(status_code=400, detail="The uploaded file is not a valid image.")
+        raise _reject_scan(
+            user, "invalid_image", "The uploaded file is not a valid image.", status_code=400
+        )
+
+    if min(image.shape[:2]) < MIN_IMAGE_SIDE:
+        raise _reject_scan(
+            user,
+            "too_small",
+            f"This photo is too small to analyze. Use a photo at least {MIN_IMAGE_SIDE} pixels "
+            "on its shortest side.",
+        )
 
     # Environmental lighting check: unusable exposures are rejected before inference,
     # borderline ones are analysed and flagged in the response.
     lighting = assess_lighting(image)
     if not lighting.is_usable:
-        too_dark = lighting.status == "too_dark"
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "poor_lighting",
-                "message": (
-                    "This photo is too dark to analyze reliably. Retake it in brighter, even light."
-                    if too_dark
-                    else "This photo is too bright or has too much glare to analyze reliably. "
-                    "Retake it without direct light or flash on the surface."
-                ),
-            },
+        raise _reject_scan(
+            user,
+            "poor_lighting",
+            "This photo is too dark to analyze reliably. Retake it in brighter, even light."
+            if lighting.status == "too_dark"
+            else "This photo is too bright or has too much glare to analyze reliably. "
+            "Retake it without direct light or flash on the surface.",
+            reason=lighting.status,
+        )
+
+    # Sharpness check: very blurry photos are rejected, slightly blurry ones are flagged.
+    sharpness = assess_sharpness(image)
+    if not sharpness.is_usable:
+        raise _reject_scan(
+            user,
+            "too_blurry",
+            "This photo is too blurry to analyze reliably. Hold the camera steady, "
+            "tap to focus on the metal, and retake it.",
         )
 
     try:
@@ -466,16 +598,19 @@ async def analyze_corrosion(
     # Error dropping: reject images where no metal (or rusted metal) surface is found,
     # before anything is uploaded or saved.
     if not segmentation.is_metal_surface:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "not_metal",
-                "message": (
-                    "No metal surface was detected in this image. "
-                    "Upload a photo where the metal surface fills most of the frame."
-                ),
-            },
+        raise _reject_scan(
+            user,
+            "not_metal",
+            "No metal surface was detected in this image. "
+            "Upload a photo where the metal surface fills most of the frame.",
         )
+
+    # Usable but imperfect photos are analysed, with warnings shown beside the result.
+    quality_warnings: list[str] = []
+    if sharpness.status == "slightly_blurry":
+        quality_warnings.append("slightly_blurry")
+    if float(segmentation.surface_mask.mean()) < SMALL_SURFACE_RATIO:
+        quality_warnings.append("small_surface")
 
     # Rust coverage is measured against the detected metal surface, not the whole photo
     # (see RUST_MEASUREMENT for how rust pixels inside the surface are counted).
@@ -485,24 +620,31 @@ async def analyze_corrosion(
         segmentation.measured_rust_mask, segmentation.surface_mask
     )
     report = prediction_engine.analyze_scan(
-        rust_percentage, asset_category, distribution["type"]
+        rust_percentage, asset_category, distribution["type"], distribution["coverage_ratio"]
     )
     logger.info(
-        "Scan analysed: rust=%.2f%% rating=%s lighting=%s geometry=%s",
+        "Scan analysed: rust=%.2f%% rating=%s slope=%s (spread x%s) days=%s lighting=%s "
+        "sharpness=%s warnings=%s low_conf_rust(kept=%d, dropped=%d) geometry=%s",
         rust_percentage,
         report["astm_rating"],
+        report["active_regression_slope"],
+        report["spread_factor"],
+        report["days_to_critical"],
         lighting.status,
+        sharpness.sharpness,
+        quality_warnings,
+        segmentation.low_conf_rust_kept,
+        segmentation.low_conf_rust_dropped,
         distribution,
     )
     filename = file.filename or "image.jpg"
-    file_extension = ".jpg" if file.content_type == "image/jpeg" else ".png"
     storage_path = f"scans/{user['id']}/{uuid4()}{file_extension}"
     try:
         storage = supabase.storage.from_(SUPABASE_STORAGE_BUCKET)
         storage.upload(
             storage_path,
             contents,
-            {"content-type": file.content_type, "upsert": "false"},
+            {"content-type": content_type, "upsert": "false"},
         )
         signed_url = storage.create_signed_url(storage_path, SUPABASE_SIGNED_URL_TTL)["signedURL"]
     except Exception as exc:
@@ -521,6 +663,8 @@ async def analyze_corrosion(
         "distribution_type": distribution["type"],
         "lighting_status": lighting.status,
         "days_to_critical": report["days_to_critical"],
+        "spread_coverage": report["spread_coverage"],
+        "quality_warnings": quality_warnings,
     }
     try:
         inserted = _insert_scan(supabase_payload)
@@ -550,6 +694,7 @@ async def analyze_corrosion(
         signed_url=signed_url,
         title=normalized_title,
         lighting_status=lighting.status,
+        quality_warnings=quality_warnings,
     )
 
 @app.get("/history")
@@ -655,6 +800,13 @@ def predict_maintenance(
     request: MaintenanceRequest,
     _user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
+    if request.asset_category not in prediction_engine.category_slopes:
+        raise HTTPException(
+            status_code=400,
+            detail="Unknown asset category. Use one of: "
+            + ", ".join(prediction_engine.category_slopes)
+            + ".",
+        )
     return prediction_engine.analyze_scan(
         request.rust_percentage, request.asset_category
     )
@@ -743,6 +895,99 @@ def admin_metrics(
         {"day": "scans_today", "week": "scans_this_week", "month": "scans_this_month"}[range]
     ]
     return metrics
+
+
+def _parse_timestamp(value: Any) -> Optional[datetime]:
+    """Parse a Supabase timestamp; fractional seconds are dropped (their length varies)."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(re.sub(r"\.\d+", "", value.replace("Z", "+00:00")))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+@app.get("/admin/analytics")
+def admin_analytics(
+    days: int = Query(30, ge=1, le=365),
+    tz_offset: int = Query(0, ge=-840, le=840),
+    _admin: dict[str, Any] = Depends(admin_user),
+) -> dict[str, Any]:
+    """System-wide aggregates for the admin charts over the last `days` calendar days.
+
+    tz_offset is the browser's offset from UTC in minutes (480 for UTC+8), so that
+    "per day" follows the admin's own calendar days.
+    """
+    local = timezone(timedelta(minutes=tz_offset))
+    today = datetime.now(local).date()
+    first_day = today - timedelta(days=days - 1)
+    start = datetime.combine(first_day, datetime.min.time(), tzinfo=local).isoformat()
+
+    scans = (
+        supabase.table("scans")
+        .select("*")  # "*" also returns the optional migration 002/003 columns when present
+        .gte("created_at", start)
+        .order("created_at")
+        .limit(5000)
+        .execute()
+    ).data or []
+
+    per_day = {(first_day + timedelta(days=offset)).isoformat(): 0 for offset in range(days)}
+    by_grade: dict[str, int] = {}
+    by_priority: dict[str, int] = {}
+    by_distribution: dict[str, int] = {}
+    by_lighting: dict[str, int] = {}
+    for scan in scans:
+        created = _parse_timestamp(scan.get("created_at"))
+        if created is not None:
+            day = created.astimezone(local).date().isoformat()
+            if day in per_day:
+                per_day[day] += 1
+        coverage = scan.get("spread_coverage")
+        report = prediction_engine.analyze_scan(
+            float(scan["rust_percentage"]),
+            "Hardware",
+            scan.get("distribution_type"),
+            float(coverage) if coverage is not None else None,
+        )
+        for counts, key in (
+            (by_grade, str(report["astm_grade"])),
+            (by_priority, report["priority_tier"]),
+            (by_distribution, scan.get("distribution_type") or "none"),
+            (by_lighting, scan.get("lighting_status") or "unknown"),
+        ):
+            counts[key] = counts.get(key, 0) + 1
+
+    # The rejection log exists only after migration 003.
+    rejections: dict[str, int] = {}
+    rejections_available = True
+    try:
+        rejected = (
+            supabase.table("scan_rejections")
+            .select("reason")
+            .gte("created_at", start)
+            .limit(5000)
+            .execute()
+        ).data or []
+        for row in rejected:
+            reason = row.get("reason") or "unknown"
+            rejections[reason] = rejections.get(reason, 0) + 1
+    except Exception:
+        rejections_available = False
+
+    return {
+        "days": days,
+        "total_scans": len(scans),
+        "total_rejections": sum(rejections.values()),
+        "scans_per_day": [{"date": day, "count": count} for day, count in per_day.items()],
+        "by_grade": by_grade,
+        "by_priority": by_priority,
+        "by_distribution": by_distribution,
+        "by_lighting": by_lighting,
+        "rejections": rejections,
+        "rejections_available": rejections_available,
+    }
 
 
 @app.get("/admin/recovery-requests")

@@ -9,6 +9,21 @@ type ScanPreparationModalProps = {
 }
 
 const MAX_TITLE_LENGTH = 120
+// Mirrors the backend limits (backend/main.py MAX_IMAGE_BYTES, image_quality.py formats)
+// so the user is told before the upload instead of after it.
+const MAX_FILE_BYTES = 15 * 1024 * 1024
+const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp"]
+
+function fileProblem(file: File): string {
+  if (!ACCEPTED_TYPES.includes(file.type)) {
+    return "This file type is not supported. Use a JPEG, PNG or WebP image."
+  }
+  if (file.size > MAX_FILE_BYTES) {
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(1)
+    return `This image is ${sizeMb} MB. The limit is 15 MB.`
+  }
+  return ""
+}
 
 export default function ScanPreparationModal({
   file,
@@ -20,6 +35,7 @@ export default function ScanPreparationModal({
   const [error, setError] = useState("")
 
   const titleLength = useMemo(() => title.trim().length, [title])
+  const problem = useMemo(() => fileProblem(file), [file])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -30,6 +46,7 @@ export default function ScanPreparationModal({
   }, [onCancel])
 
   const handleConfirm = () => {
+    if (problem) return
     const normalizedTitle = title.trim()
     if (!normalizedTitle) {
       setError("Enter a name for this scan.")
@@ -93,11 +110,11 @@ export default function ScanPreparationModal({
               For best results, make sure the metal surface fills most of the photo and is evenly lit.
             </p>
 
-            {error && <p className="text-sm text-red-200" role="alert">{error}</p>}
+            {(problem || error) && <p className="text-sm text-red-200" role="alert">{problem || error}</p>}
 
             <div className="mt-auto flex flex-col gap-2 sm:flex-row md:flex-col">
               <button type="button" onClick={onCancel} className="rounded-lg border px-4 py-2.5 text-sm font-medium text-white/70 hover:text-white" style={{ borderColor: "var(--color-border)" }}>Cancel</button>
-              <button type="submit" className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-all hover:brightness-110" style={{ background: "var(--color-accent)" }}>Start scan</button>
+              <button type="submit" disabled={Boolean(problem)} className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40" style={{ background: "var(--color-accent)" }}>Start scan</button>
             </div>
           </div>
         </form>

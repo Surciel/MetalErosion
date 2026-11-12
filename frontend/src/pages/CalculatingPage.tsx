@@ -133,11 +133,14 @@ export default function CalculatingPage({
 
   const isActive = phase === "checking-session" || phase === "processing"
   // Input rejected by validation (not metal / unusable lighting): retrying the same photo cannot help.
-  const isRejectedInput = error?.kind === "not-metal" || error?.kind === "poor-lighting"
-  const rejectedHeading =
-    error?.kind === "poor-lighting"
-      ? "The lighting in this photo is unusable."
-      : "This doesn't look like metal."
+  const REJECTED_HEADINGS: Partial<Record<AnalysisErrorInfo["kind"], string>> = {
+    "not-metal": "This doesn't look like metal.",
+    "poor-lighting": "The lighting in this photo is unusable.",
+    "too-blurry": "This photo is too blurry.",
+    "too-small": "This photo is too small.",
+  }
+  const rejectedHeading = error ? REJECTED_HEADINGS[error.kind] : undefined
+  const isRejectedInput = rejectedHeading !== undefined
   const phaseLabel =
     phase === "checking-session"
       ? "Checking your session..."

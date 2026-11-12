@@ -9,6 +9,7 @@ export type View =
   | "rust-info"
   | "classification-info"
   | "history"
+  | "analytics"
   | "history-detail"
   | "admin"
 
@@ -26,6 +27,8 @@ export type AnalysisErrorKind =
   | "invalid-image"
   | "not-metal"
   | "poor-lighting"
+  | "too-blurry"
+  | "too-small"
   | "request-timeout"
   | "network-unavailable"
   | "server-failure"
@@ -76,6 +79,24 @@ export type DistributionType = "S" | "G" | "P" | "H"
 /** Environmental lighting of the analysed photo (rejected exposures never produce a result). */
 export type LightingStatus = "ok" | "low_light" | "overexposed"
 
+/** System-wide aggregates for the admin charts (GET /admin/analytics). */
+export interface AdminAnalytics {
+  days: number
+  totalScans: number
+  totalRejections: number
+  scansPerDay: { date: string; count: number }[]
+  byGrade: Record<string, number>
+  byPriority: Record<string, number>
+  byDistribution: Record<string, number>
+  byLighting: Record<string, number>
+  rejections: Record<string, number>
+  /** False until migration 003 has created the rejection log. */
+  rejectionsAvailable: boolean
+}
+
+/** Issues with a photo that was still analysed. */
+export type QualityWarning = "slightly_blurry" | "small_surface"
+
 export type SeverityLevel = "none" | "low" | "moderate" | "high" | "critical"
 
 export interface ScanResult {
@@ -89,7 +110,14 @@ export interface ScanResult {
   astmRating: string
   distributionType: DistributionType | null
   daysToCritical: number | null
+  /** Share of the metal surface grid that contains rust (0 to 1); null for older scans. */
+  spreadCoverage: number | null
+  /** Multiplier applied to the category corrosion rate because of the spread. */
+  spreadFactor: number | null
+  /** Effective corrosion rate used for the prediction, in rust % per day. */
+  regressionSlope: number | null
   lightingStatus: LightingStatus | null
+  qualityWarnings: QualityWarning[]
   priorityLevel: string
   classification: string
   classificationLabel: string
@@ -111,7 +139,11 @@ export interface AnalysisResponse {
   astm_rating?: string | null
   distribution_type?: string | null
   days_to_critical?: number | null
+  spread_coverage?: number | null
+  spread_factor?: number | null
+  regression_slope?: number | null
   lighting_status?: string | null
+  quality_warnings?: string[] | null
   priority_level: string
   recommendation: string
   box_coordinates: number[]

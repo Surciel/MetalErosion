@@ -11,7 +11,9 @@ import {
   PriorityTooltip,
   RustPercentTooltip,
 } from "@/components/ClassificationTooltips"
-import LightingNotice from "@/components/LightingNotice"
+import QualityNotice from "@/components/QualityNotice"
+import ProjectionChart from "@/components/charts/ProjectionChart"
+import AstmScale from "@/components/charts/AstmScale"
 import { severityColor } from "@/utils/severity"
 import { distributionName } from "@/utils/classificationInfo"
 import type { ScanResult, View } from "@/types"
@@ -166,7 +168,7 @@ export default function ResultsPage({
       <div className="flex-1 overflow-y-auto">
         {/* ── Section 1: Overview ───────────────────────────────────── */}
         <section className="py-10" style={{ background: "var(--color-bg)" }}>
-          <LightingNotice status={displayed.lightingStatus} className="mx-auto mb-6 max-w-5xl px-4" />
+          <QualityNotice lightingStatus={displayed.lightingStatus} warnings={displayed.qualityWarnings} className="mx-auto mb-6 max-w-5xl px-4" />
           <PageGrid className="px-4">
             {/* Left: image — cols 1–6 */}
             <div style={{ gridColumn: "1 / 7" }}>
@@ -423,6 +425,14 @@ export default function ResultsPage({
               <p className="text-sm text-white/75 leading-relaxed">
                 {displayed.classificationExplanation}
               </p>
+            </div>
+
+            {/* Charts — projection and ASTM scale position */}
+            <div style={{ gridColumn: "1 / 7" }}>
+              <ProjectionChart scan={displayed} className="h-full" />
+            </div>
+            <div style={{ gridColumn: "7 / 13" }}>
+              <AstmScale scan={displayed} className="h-full" />
             </div>
 
             {/* DSS — full width */}

@@ -9,7 +9,9 @@ import {
   PriorityTooltip,
   RustPercentTooltip,
 } from "@/components/ClassificationTooltips"
-import LightingNotice from "@/components/LightingNotice"
+import QualityNotice from "@/components/QualityNotice"
+import ProjectionChart from "@/components/charts/ProjectionChart"
+import AstmScale from "@/components/charts/AstmScale"
 import { severityColor } from "@/utils/severity"
 import { distributionName } from "@/utils/classificationInfo"
 import type { ScanResult, View } from "@/types"
@@ -191,7 +193,7 @@ export default function HistoryDetailPage({
             className="py-10 px-8"
             style={{ background: "var(--color-bg)" }}
           >
-            <LightingNotice status={displayed.lightingStatus} className="max-w-4xl mx-auto mb-6" />
+            <QualityNotice lightingStatus={displayed.lightingStatus} warnings={displayed.qualityWarnings} className="max-w-4xl mx-auto mb-6" />
             <div className="max-w-4xl mx-auto flex gap-6">
               {/* Image */}
               <div className="flex-1 min-w-0">
@@ -350,6 +352,12 @@ export default function HistoryDetailPage({
                     {displayed.classificationExplanation}
                   </p>
                 </div>
+              </div>
+
+              {/* Charts — projection and ASTM scale position */}
+              <div className="grid gap-4 md:grid-cols-2">
+                <ProjectionChart scan={displayed} />
+                <AstmScale scan={displayed} />
               </div>
 
               {/* DSS */}

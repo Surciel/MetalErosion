@@ -88,6 +88,28 @@ This guide covers the six **[SYSTEM]** tasks from the pre-defense task board. Fo
 **Settings you can tune** (in `backend/.env`, restart the backend after changing):
 - `VALIDATION_CONFIDENCE`: raise it if non-metal photos get through; lower it if real metal gets rejected.
 - `MIN_SURFACE_AREA_RATIO`: the minimum share of the photo that must be metal or rust.
+- `RUST_CONFIDENCE` and `RUST_MIN_METAL_OVERLAP`: see the table below.
+
+**Confidence thresholds, by detection:**
+
+| Detection | What happens |
+|---|---|
+| Metal ≥ 0.25 (`METAL_CONFIDENCE`) | Kept as metal surface. |
+| Metal ≥ 0.5 (`VALIDATION_CONFIDENCE`) over ≥ 5% of the photo | Passes the metal check. |
+| Rust ≥ 0.25 | Kept. |
+| Rust ≥ 0.5 over ≥ 5% of the photo | Passes the check alone (fully rusted objects). |
+| Rust 0.12–0.25 (`RUST_CONFIDENCE`) | Kept **only if at least 50% of its outline lies on detected metal** (`RUST_MIN_METAL_OVERLAP`). |
+| Rust < 0.12 | Dropped. |
+
+The low rust band recovers rust the model is unsure about, and the metal-overlap rule stops low-confidence "rust" on wood, walls or skin from being counted. Each scan logs `low_conf_rust(kept=…, dropped=…)` in the backend terminal. Set `RUST_CONFIDENCE=0.25` to turn the low band off.
+
+**Choosing the thresholds by measurement:** [`backend/tools/evaluate_thresholds.py`](backend/tools/evaluate_thresholds.py) runs the model on a labelled test set and reports, for each threshold, the share of metal photos wrongly rejected and of non-metal photos wrongly accepted. It also compares `RUST_MEASUREMENT=color` against `mask` with the labelled rust share. Run it from the `backend` folder:
+```powershell
+python tools/evaluate_thresholds.py --data <test split folder> --negatives <non-metal photos> --out <results folder>
+```
+To accept weaker metal detections, lower `METAL_CONFIDENCE` and `VALIDATION_CONFIDENCE` together; lowering only one has no effect.
+
+**Don't combine a low `RUST_CONFIDENCE` with `RUST_MEASUREMENT=mask` on the current model:** its rust outlines cover whole objects, so the scissors would read about 90% instead of about 50%.
 
 **Known limitation:** in testing, random colour noise was once read as metal with **0.895** confidence, which is above any sensible threshold. The real fix is retraining with non-metal **background images** (see [Model training plan](#model-training-plan-before-the-friday-defense), item 2).
 
@@ -353,6 +375,119 @@ yolo segment train model=runs/segment/final3/weights/best.pt data=dataset/rust.y
 | **Wed, Nov 11** | Compare with the old model on the test set and swap if better. Then tune `VALIDATION_CONFIDENCE` and the spread thresholds in `spread_analysis.py` on real photos. |
 | **Thu, Nov 12** | **Freeze the code and model.** Run the full by-hand test from this guide and prepare the metrics slides. |
 | **Fri, Nov 13** | Defense. Keep the old model ready as a fallback. |
+
+---
+
+## Second change list
+
+### Spread changes the regression slope
+Before this change the distribution type was only a label: two scans with the same rust % got the same prediction whether the rust was one patch or spread everywhere.
+
+**Now:** effective corrosion rate = category rate × spread factor.
+- The spread analysis already measures **coverage**: the share of the metal surface grid (8×8) that contains rust.
+- **Spread factor** = 0.85 + 0.45 × coverage. Rust in one small area gives ×0.85; rust across the whole surface gives ×1.30.
+- Days to critical = (33% − current rust %) ÷ effective rate, so wider spread means fewer days.
+- No rust, or an older scan with no stored coverage, keeps the factor at ×1.00.
+
+Example at 8% rust, Hardware category:
+
+| Coverage | Factor | Days to critical |
+|---|---|---|
+| 10% (concentrated) | ×0.895 | 619 |
+| 50% | ×1.075 | 516 |
+| 100% (everywhere) | ×1.30 | 426 |
+| Not stored (older scan) | ×1.00 | 554 |
+
+**The 0.85 and 1.30 bounds are project assumptions, not values from ISO 9223 or ASTM D610.** The reasoning is that rust spread over more of the surface has more active edges to grow from. They are named constants (`SPREAD_FACTOR_MIN`, `SPREAD_FACTOR_MAX`) at the top of `backend/predictive_engine.py`; cite a source for them or adjust them before presenting them as established.
+
+| File | Change |
+|---|---|
+| [`backend/predictive_engine.py`](backend/predictive_engine.py) | `spread_factor()`; `analyze_scan` takes the coverage and returns `spread_factor`, `spread_coverage` and the effective slope. |
+| [`backend/main.py`](backend/main.py) | Passes the measured coverage to the engine, saves it, and returns `spread_coverage`, `spread_factor` and `regression_slope`. History uses the stored coverage. Saving a scan now drops only the columns whose migration is missing. |
+| [`backend/migrations/003_analytics_fields.sql`](backend/migrations/003_analytics_fields.sql) | **New.** Adds `scans.spread_coverage`. Safe to run more than once. |
+| [`frontend/src/utils/classificationInfo.ts`](frontend/src/utils/classificationInfo.ts), [`api.ts`](frontend/src/services/api.ts), [`types/index.ts`](frontend/src/types/index.ts) | New fields; the classification explanation and the priority tooltip now state the spread and its factor. |
+
+**Check by hand**
+- [ ] Run migration 003 in the Supabase SQL editor and restart the backend.
+- [ ] Scan a photo with rust all over and one with a single rust patch. The classification text should say "Rust is found across N% of the surface, so the projected rate is scaled ×…", with a higher factor for the first.
+- [ ] The backend terminal logs `slope=… (spread x…) days=…` for each scan.
+- [ ] Reopen the scan from History: the days to critical match the original result.
+
+### More input validations
+The upload is now checked in this order. Anything rejected is never uploaded or saved.
+
+| Check | Result when it fails |
+|---|---|
+| File type and 15 MB limit, **in the browser** before upload | Message in the upload pop-up; **Start scan** is disabled. |
+| Asset category is one of the known ones | Rejected (400). Before, an unknown category silently used a default rate. |
+| Real file format is JPEG, PNG or WebP, read from the file's bytes | Rejected (400 `unsupported_format`). |
+| The file decodes as an image | Rejected (400 `invalid_image`). |
+| Shortest side is at least 200 px | Rejected (422 `too_small`). |
+| Lighting (existing check) | Rejected (422 `poor_lighting`) or analysed with a warning. |
+| **Sharpness** | Very blurry: rejected (422 `too_blurry`). Slightly blurry: analysed with a warning. |
+| Metal present (existing check) | Rejected (422 `not_metal`). |
+| **Metal fills at least 15% of the photo** | Analysed with a "metal is small in the frame" warning. |
+
+- **How sharpness is measured:** edge strength (variance of the Laplacian) in each cell of a 6×6 grid on the photo scaled to 640 px; the score is the 90th percentile cell, so a sharp object in front of a blurred background still passes.
+- **Where the thresholds come from:** on 117 real photos (your 12 scans and the 105 test images) the lowest score was 63. Moderately blurred copies scored under 15 and lightly blurred ones around 27. Photos below **12** are rejected and below **40** get the warning. The constants are at the top of `backend/image_quality.py`.
+- **Minimum size is 200 px,** not the 320 px first planned, because one valid test-set photo is 205 px on its shortest side.
+- **Images are stored with their real format.** Before, anything that wasn't a JPEG was saved as `.png`.
+- **Warnings** are returned as `quality_warnings` and saved with the scan, so they also show in History.
+- **Rejections are logged** (user, reason, time; no image) in a new `scan_rejections` table for the admin chart. If the table doesn't exist yet, the scan is still rejected normally.
+
+| File | Change |
+|---|---|
+| [`backend/image_quality.py`](backend/image_quality.py) | `assess_sharpness()`, `detect_image_format()`, `MIN_IMAGE_SIDE`. |
+| [`backend/main.py`](backend/main.py) | The new checks, `quality_warnings`, and `_reject_scan()` which logs the reason. |
+| [`backend/migrations/003_analytics_fields.sql`](backend/migrations/003_analytics_fields.sql) | Adds `scans.quality_warnings` and the `scan_rejections` table. |
+| [`frontend/src/components/ScanPreparationModal.tsx`](frontend/src/components/ScanPreparationModal.tsx) | File type and size check before upload. |
+| [`frontend/src/components/QualityNotice.tsx`](frontend/src/components/QualityNotice.tsx) | **New.** Replaces `LightingNotice`; one banner for lighting, blur and small-metal warnings. |
+| [`CalculatingPage.tsx`](frontend/src/pages/CalculatingPage.tsx), [`api.ts`](frontend/src/services/api.ts), [`types/index.ts`](frontend/src/types/index.ts) | "This photo is too blurry." and "This photo is too small." screens. |
+
+**Check by hand** (run migration 003 again first; it now adds more)
+- [ ] Choose a GIF or a file over 15 MB: the pop-up shows the reason and **Start scan** is disabled.
+- [ ] Scan an out-of-focus photo: "This photo is too blurry."
+- [ ] Scan a photo where the metal is small and far away: it is analysed, with the "Metal is small in the frame" banner.
+- [ ] A normal sharp photo shows no banner.
+
+### Graphs and charts
+Charts are in three places. Each chart card has a **Show table** button with the same numbers, and a tooltip on hover.
+
+**Results page and history detail page (per scan)**
+- **Projected corrosion:** rust % over time from today's measured point to the 33% critical threshold, at the scan's corrosion rate. The line is dashed because it is a projection from one scan, and the card says so. A scan already at or past 33% shows a message instead of a chart. The table lists when each ASTM grade boundary is passed.
+- **Position on the ASTM D610 scale:** eleven grade blocks from 10 to 0 with the scan's grade highlighted.
+
+**Analytics page (new, in the side menu; the signed-in user's own scans)**
+- Period filter (last 7, 30 or 90 days, or all time) that every tile and chart follows.
+- Tiles: number of scans, average rust coverage, critical scans.
+- **Rust coverage per scan:** one dot per scan by date. The dots are not joined, because the scans are of different objects and a line would suggest a trend that isn't there.
+- Scans by ASTM grade, by maintenance priority and by rust distribution.
+
+**Admin dashboard (all users' scans)**
+- Replaces the old "Scan activity" bars, whose heights were just the count × 24 px.
+- Period filter (last 7, 30 or 90 days) for the whole section.
+- Tiles: scans analysed, scans rejected, rejection rate.
+- Scans per day (in the admin's local time), by ASTM grade, by priority, by distribution, by photo lighting, and rejected scans by reason.
+- The rejection chart needs migration 003; until then it says the log isn't set up.
+
+**Design choices**
+- Charts sit on a darker panel (`#1f2818`). On the app's normal card colour the chart colours fall below the 3:1 contrast minimum; on this panel every colour passes (checked with a palette validator).
+- One blue for all counts. Green, amber and red are used only where the colour means a state (priority, the highlighted grade, the critical line), always with a text label.
+- Bars are at most 24 px thick; grid lines are thin and solid.
+
+| File | Change |
+|---|---|
+| [`frontend/src/components/charts/`](frontend/src/components/charts/) | **New.** `ChartCard`, `CountBarChart`, `ProjectionChart`, `AstmScale`, `ScanDotsChart`, `StatTile`, `AdminAnalyticsSection`, `chartTheme`. |
+| [`frontend/src/pages/AnalyticsPage.tsx`](frontend/src/pages/AnalyticsPage.tsx), [`utils/analytics.ts`](frontend/src/utils/analytics.ts) | **New.** The user analytics page and its counting helpers. |
+| [`App.tsx`](frontend/src/App.tsx), [`SideMenu.tsx`](frontend/src/components/SideMenu.tsx), [`AdminPage.tsx`](frontend/src/pages/AdminPage.tsx), [`ResultsPage.tsx`](frontend/src/pages/ResultsPage.tsx), [`HistoryDetailPage.tsx`](frontend/src/pages/HistoryDetailPage.tsx) | The new `analytics` view and menu item; charts added to the pages. |
+| [`backend/main.py`](backend/main.py) | **New** `GET /admin/analytics?days=…&tz_offset=…` (admin only). |
+| [`frontend/package.json`](frontend/package.json) | Adds `recharts` 3.10.1. |
+
+**Check by hand**
+- [ ] Results page: the projection chart and the ASTM scale appear under the analysis text; hovering the line shows the projected rust % and grade.
+- [ ] A scan at 33% rust or more shows "already at or past the critical threshold" instead of a chart.
+- [ ] Side menu → **Analytics**: tiles and four charts; changing the period changes all of them; **Show table** works.
+- [ ] Admin page: the analytics section loads, and the period filter updates every chart.
 
 ---
 

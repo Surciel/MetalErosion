@@ -1,5 +1,6 @@
 import type {
   Account,
+  AdminAnalytics,
   AdminMetrics,
   AnalyzeCorrosionOptions,
   AnalysisResponse,
@@ -7,6 +8,7 @@ import type {
   DistributionType,
   LightingStatus,
   MetricRange,
+  QualityWarning,
   RecoveryRequest,
   ScanResult,
 } from "@/types"
@@ -14,6 +16,19 @@ import { classificationExplanation, rustExplanation } from "@/utils/classificati
 
 const DISTRIBUTION_TYPES: ReadonlyArray<DistributionType> = ["S", "G", "P", "H"]
 const LIGHTING_STATUSES: ReadonlyArray<LightingStatus> = ["ok", "low_light", "overexposed"]
+const QUALITY_WARNINGS: ReadonlyArray<QualityWarning> = ["slightly_blurry", "small_surface"]
+
+/** Backend rejection codes that have their own error kind (others show as invalid-image). */
+const REJECTION_KINDS: Record<string, AnalysisErrorKind> = {
+  not_metal: "not-metal",
+  poor_lighting: "poor-lighting",
+  too_blurry: "too-blurry",
+  too_small: "too-small",
+}
+
+function toQualityWarnings(values: string[] | null | undefined): QualityWarning[] {
+  return QUALITY_WARNINGS.filter((warning) => (values ?? []).includes(warning))
+}
 
 function toDistributionType(value: string | null | undefined): DistributionType | null {
   return DISTRIBUTION_TYPES.find((type) => type === value) ?? null
@@ -120,8 +135,11 @@ function mapAnalysisResponse(
   const createdAt = data.created_at ?? new Date().toISOString()
   const distributionType = toDistributionType(data.distribution_type)
   const astmRating = data.astm_rating ?? String(data.astm_grade)
-  const daysToCritical =
-    typeof data.days_to_critical === "number" ? data.days_to_critical : null
+  const numberOrNull = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null
+  const daysToCritical = numberOrNull(data.days_to_critical)
+  const spreadCoverage = numberOrNull(data.spread_coverage)
+  const spreadFactor = numberOrNull(data.spread_factor)
 
   return {
     id: String(data.scan_id ?? createdAt),
@@ -133,7 +151,11 @@ function mapAnalysisResponse(
     astmRating,
     distributionType,
     daysToCritical,
+    spreadCoverage,
+    spreadFactor,
+    regressionSlope: numberOrNull(data.regression_slope),
     lightingStatus: toLightingStatus(data.lighting_status),
+    qualityWarnings: toQualityWarnings(data.quality_warnings),
     priorityLevel: data.priority_level,
     classification: `ASTM ${astmRating}`,
     classificationLabel: data.priority_level,
@@ -144,6 +166,8 @@ function mapAnalysisResponse(
       astmRating,
       data.priority_level,
       daysToCritical,
+      spreadCoverage,
+      spreadFactor,
     ),
     boxCoordinates: data.box_coordinates ?? [],
     date: new Date(createdAt).toLocaleDateString("en-US", {
@@ -213,11 +237,7 @@ export async function analyzeCorrosion(
       if (response.status === 400 || response.status === 422) {
         const parsed = await parseError(response)
         throw new AnalysisRequestError(
-          parsed.code === "not_metal"
-            ? "not-metal"
-            : parsed.code === "poor_lighting"
-              ? "poor-lighting"
-              : "invalid-image",
+          (parsed.code && REJECTION_KINDS[parsed.code]) || "invalid-image",
           parsed.message,
           false,
         )
@@ -432,6 +452,43 @@ export async function updateAdminAccount(
     },
   )
   return mapAdminAccount(account)
+}
+
+type AdminAnalyticsResponse = {
+  days: number
+  total_scans: number
+  total_rejections: number
+  scans_per_day: { date: string; count: number }[]
+  by_grade: Record<string, number>
+  by_priority: Record<string, number>
+  by_distribution: Record<string, number>
+  by_lighting: Record<string, number>
+  rejections: Record<string, number>
+  rejections_available: boolean
+}
+
+export async function getAdminAnalytics(
+  accessToken: string,
+  days: number,
+): Promise<AdminAnalytics> {
+  // The browser's offset from UTC, so "per day" follows the admin's calendar days.
+  const tzOffset = -new Date().getTimezoneOffset()
+  const data = await requestJson<AdminAnalyticsResponse>(
+    `/admin/analytics?days=${days}&tz_offset=${tzOffset}`,
+    accessToken,
+  )
+  return {
+    days: data.days,
+    totalScans: data.total_scans,
+    totalRejections: data.total_rejections,
+    scansPerDay: data.scans_per_day ?? [],
+    byGrade: data.by_grade ?? {},
+    byPriority: data.by_priority ?? {},
+    byDistribution: data.by_distribution ?? {},
+    byLighting: data.by_lighting ?? {},
+    rejections: data.rejections ?? {},
+    rejectionsAvailable: data.rejections_available ?? false,
+  }
 }
 
 export async function getAdminMetrics(

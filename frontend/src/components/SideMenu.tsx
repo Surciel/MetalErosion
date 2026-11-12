@@ -32,6 +32,7 @@ export default function SideMenu({
             : [
                 { label: "Home", view: "home" as View },
                 { label: "History", view: "history" as View },
+                { label: "Analytics", view: "analytics" as View },
                 ...(isAdmin ? [{ label: "Admin", view: "admin" as View }] : []),
               ]
           ).map((item) => (

@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
+import AdminAnalyticsSection from "@/components/charts/AdminAnalyticsSection"
 import type {
   Account,
+  AdminAnalytics,
   AdminMetrics,
-  MetricRange,
   RecoveryRequest,
   View,
 } from "@/types"
@@ -41,7 +42,11 @@ export default function AdminPage({
   error,
   onNavigate,
   onLogout,
-  onRangeChange,
+  analytics,
+  analyticsDays,
+  analyticsLoading,
+  analyticsError,
+  onAnalyticsRangeChange,
   onUpdateAccount,
   onHandleRecovery,
 }: {
@@ -53,7 +58,11 @@ export default function AdminPage({
   error: string
   onNavigate: (view: View) => void
   onLogout: () => void
-  onRangeChange: (range: MetricRange) => void
+  analytics: AdminAnalytics | null
+  analyticsDays: number
+  analyticsLoading: boolean
+  analyticsError: string
+  onAnalyticsRangeChange: (days: number) => void
   onUpdateAccount: (
     accountId: string,
     changes: Pick<Account, "username" | "email" | "role">,
@@ -61,16 +70,11 @@ export default function AdminPage({
   onHandleRecovery: (requestId: string) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const [range, setRange] = useState<MetricRange>(metrics.selectedRange)
   const [editingAccount, setEditingAccount] = useState<Account | null>(null)
   const [draft, setDraft] = useState({ username: "", email: "", role: "user" as Account["role"] })
   const [accountQuery, setAccountQuery] = useState("")
   const [accountRole, setAccountRole] = useState<"all" | Account["role"]>("all")
   const [accountStatus, setAccountStatus] = useState<"all" | Account["status"]>("all")
-
-  useEffect(() => {
-    setRange(metrics.selectedRange)
-  }, [metrics.selectedRange])
 
   const pendingRequests = useMemo(
     () => recoveryRequests.filter((request) => request.status === "pending"),
@@ -137,47 +141,15 @@ export default function AdminPage({
           <MetricCard label="Scans this month" value={metrics.scansThisMonth} detail="Current month" />
         </section>
 
-        <section className="grid lg:grid-cols-[1.35fr_0.85fr] gap-5 mb-5">
-          <div className="rounded-2xl p-5" style={{ background: "var(--color-card)" }}>
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-              <div>
-                <h2 className="text-base font-semibold text-white">Scan activity</h2>
-                <p className="text-xs text-white/40 mt-1">Choose a period to inspect the current workload.</p>
-              </div>
-              <div className="flex rounded-lg p-1 gap-1" style={{ background: "var(--color-btn)" }}>
-                {(["day", "week", "month"] as MetricRange[]).map((option) => (
-                  <button
-                    key={option}
-                    onClick={() => {
-                      setRange(option)
-                      onRangeChange(option)
-                    }}
-                    className="px-3 py-1.5 rounded-md text-xs capitalize transition-colors"
-                    style={{
-                      background: range === option ? "var(--color-accent)" : "transparent",
-                      color: range === option ? "white" : "rgba(255,255,255,0.55)",
-                    }}
-                  >
-                    {option}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="flex items-end gap-5 h-36">
-              {[{ label: "Today", value: metrics.scansToday, color: "#c0392b" }, { label: "Week", value: metrics.scansThisWeek, color: "#e67e22" }, { label: "Month", value: metrics.scansThisMonth, color: "#8fa87a" }].map((item) => (
-                <div key={item.label} className="flex-1 flex flex-col items-center gap-2 h-full justify-end">
-                  <span className="font-mono text-sm text-white">{item.value}</span>
-                  <div className="w-full max-w-20 rounded-t-md transition-all" style={{ height: `${Math.max(item.value * 24, 8)}px`, background: item.color }} />
-                  <span className="text-xs text-white/45">{item.label}</span>
-                </div>
-              ))}
-            </div>
-            <div className="mt-5 pt-4 border-t border-white/10 flex items-center justify-between">
-              <span className="text-xs text-white/45">Selected period</span>
-              <span className="text-sm font-semibold text-white capitalize">{range}: {range === metrics.selectedRange ? metrics.selectedRangeScans : "Update selection"} scans</span>
-            </div>
-          </div>
+        <AdminAnalyticsSection
+          analytics={analytics}
+          days={analyticsDays}
+          loading={analyticsLoading}
+          error={analyticsError}
+          onRangeChange={onAnalyticsRangeChange}
+        />
 
+        <section className="mb-5">
           <div className="rounded-2xl p-5" style={{ background: "var(--color-card)" }}>
             <div className="flex items-start justify-between gap-3 mb-5">
               <div>

@@ -8,10 +8,12 @@ import InfoPage from "@/pages/InfoPage"
 import HistoryPage from "@/pages/HistoryPage"
 import HistoryDetailPage from "@/pages/HistoryDetailPage"
 import AdminPage from "@/pages/AdminPage"
+import AnalyticsPage from "@/pages/AnalyticsPage"
 import SeverityAlert from "@/components/SeverityAlert"
 import type { User } from "@supabase/supabase-js"
 import {
   getAdminAccounts,
+  getAdminAnalytics,
   getAdminMetrics,
   getAdminRecoveryRequests,
   getCurrentAccount,
@@ -25,6 +27,7 @@ import {
 import { supabase } from "@/services/supabase"
 import type {
   Account,
+  AdminAnalytics,
   AdminMetrics,
   LoginCredentials,
   MetricRange,
@@ -41,7 +44,12 @@ export default function App() {
   const [activeAccount, setActiveAccount] = useState<Account | null>(null)
   const [accounts, setAccounts] = useState<Account[]>([])
   const [recoveryRequests, setRecoveryRequests] = useState<RecoveryRequest[]>([])
-  const [metricRange, setMetricRange] = useState<MetricRange>("month")
+  const [metricRange] = useState<MetricRange>("month")
+  // Admin charts: system-wide aggregates for the selected number of days.
+  const [adminAnalytics, setAdminAnalytics] = useState<AdminAnalytics | null>(null)
+  const [analyticsDays, setAnalyticsDays] = useState(30)
+  const [analyticsLoading, setAnalyticsLoading] = useState(false)
+  const [analyticsError, setAnalyticsError] = useState("")
   const [adminMetrics, setAdminMetrics] = useState<AdminMetrics>({
     totalAccounts: 0,
     activeAccounts: 0,
@@ -133,9 +141,29 @@ export default function App() {
     setView("landing")
   }
 
+  // Loaded separately from the other admin data so a chart failure never hides accounts.
+  const loadAdminAnalytics = async (accessToken: string, days: number) => {
+    setAnalyticsLoading(true)
+    setAnalyticsError("")
+    try {
+      setAdminAnalytics(await getAdminAnalytics(accessToken, days))
+    } catch (cause: unknown) {
+      if (cause instanceof ApiError && cause.status === 401) {
+        handleSessionExpired()
+        return
+      }
+      setAnalyticsError(
+        cause instanceof Error ? cause.message : "Unable to load analytics.",
+      )
+    } finally {
+      setAnalyticsLoading(false)
+    }
+  }
+
   const loadAdminData = async (accessToken: string, range: MetricRange) => {
     setAdminLoading(true)
     setAdminError("")
+    void loadAdminAnalytics(accessToken, analyticsDays)
 
     try {
       const [nextAccounts, nextMetrics, nextRecoveryRequests] = await Promise.all([
@@ -416,13 +444,13 @@ export default function App() {
     }
   }
 
-  const handleAdminRangeChange = async (range: MetricRange) => {
-    setMetricRange(range)
+  const handleAnalyticsRangeChange = async (days: number) => {
+    setAnalyticsDays(days)
     const {
       data: { session },
     } = await supabase.auth.getSession()
     if (session?.access_token) {
-      await loadAdminData(session.access_token, range)
+      await loadAdminAnalytics(session.access_token, days)
     }
   }
 
@@ -547,7 +575,11 @@ export default function App() {
           error={adminError}
           onNavigate={setView}
           onLogout={handleLogout}
-          onRangeChange={handleAdminRangeChange}
+          analytics={adminAnalytics}
+          analyticsDays={analyticsDays}
+          analyticsLoading={analyticsLoading}
+          analyticsError={analyticsError}
+          onAnalyticsRangeChange={handleAnalyticsRangeChange}
           onUpdateAccount={handleAdminAccountUpdate}
           onHandleRecovery={handleAdminRecovery}
         />
@@ -624,6 +656,17 @@ export default function App() {
           onNavigate={setView}
           onDelete={handleDeleteHistoryScan}
           onEdit={handleUpdateHistoryScan}
+        />
+      )
+    case "analytics":
+      return (
+        <AnalyticsPage
+          username={username}
+          history={history}
+          historyLoading={historyLoading}
+          historyError={historyError}
+          isAdmin={activeAccount?.role === "admin"}
+          onNavigate={setView}
         />
       )
     case "history-detail":

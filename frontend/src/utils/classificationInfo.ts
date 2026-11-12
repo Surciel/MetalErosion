@@ -1,4 +1,4 @@
-import type { DistributionType, LightingStatus } from "@/types"
+import type { DistributionType, LightingStatus, QualityWarning } from "@/types"
 
 /**
  * Single source for every explanation shown in tooltips and analysis panels.
@@ -16,7 +16,7 @@ export const DISTRIBUTION_INFO =
   "How the rust is spread across the surface, measured from the shape, size and position of the detected rust areas (geometric spread analysis)."
 
 export const PRIORITY_INFO =
-  "Maintenance urgency from the predictive engine: a linear-regression corrosion rate projects how many days remain until the surface reaches 33% rust (ASTM grade 1)."
+  "Maintenance urgency from the predictive engine: a linear-regression corrosion rate projects how many days remain until the surface reaches 33% rust (ASTM grade 1). The rate is scaled by how widely the rust is spread: rust found across more of the surface is projected to grow faster (×0.85 when concentrated, up to ×1.30 when it covers the whole surface)."
 
 export const DSS_INFO =
   "Decision Support System: the recommended maintenance action for this ASTM grade."
@@ -73,6 +73,31 @@ export const LIGHTING_STATUSES: Record<LightingStatus, string> = {
   overexposed: "The photo is very bright or has glare. Results may be less accurate; avoid direct light or flash.",
 }
 
+export const QUALITY_WARNINGS: Record<QualityWarning, { title: string; text: string }> = {
+  slightly_blurry: {
+    title: "Slightly blurry",
+    text: "Fine rust spots may be missed or merged. Hold the camera steady and tap to focus for a sharper photo.",
+  },
+  small_surface: {
+    title: "Metal is small in the frame",
+    text: "The metal covers less than 15% of the photo, so small rust areas are measured from few pixels. Move closer so the metal fills most of the frame.",
+  },
+}
+
+export const QUALITY_INFO =
+  "Checks on the photo itself before analysis: lighting, sharpness and how much of the frame the metal fills. Unusable photos are rejected; usable but imperfect ones are analyzed and flagged here."
+
+/** Rust coverage at which a surface is treated as critical (start of ASTM grade 1). */
+export const CRITICAL_RUST_PERCENT = 33
+
+/** ASTM D610 grade for a rust percentage (mirrors backend/predictive_engine.py). */
+export function gradeForPercent(rustPercent: number): number {
+  const band = ASTM_GRADES.find(
+    (entry) => entry.maxPercent !== null && rustPercent <= entry.maxPercent,
+  )
+  return band ? band.grade : 0
+}
+
 export function gradeBandText(grade: number): string {
   const band = ASTM_GRADES.find((entry) => entry.grade === grade)
   if (!band) return `Grade ${grade}`
@@ -103,13 +128,20 @@ export function classificationExplanation(
   astmRating: string,
   priorityLevel: string,
   daysToCritical: number | null,
+  spreadCoverage: number | null = null,
+  spreadFactor: number | null = null,
 ): string {
   const band = gradeBandText(astmGrade)
-  const timeline =
-    priorityLevel === "CRITICAL"
-      ? "The surface is at or beyond the critical threshold (33% rust)."
-      : daysToCritical !== null
-        ? `At the current corrosion rate it is projected to reach the critical threshold (33% rust) in about ${daysToCritical} days.`
-        : ""
-  return `ASTM D610 rating ${astmRating}. ${band}. Priority: ${priorityLevel}. ${timeline}`.trim()
+  const critical = priorityLevel === "CRITICAL"
+  const timeline = critical
+    ? "The surface is at or beyond the critical threshold (33% rust)."
+    : daysToCritical !== null
+      ? `At the current corrosion rate it is projected to reach the critical threshold (33% rust) in about ${daysToCritical} days.`
+      : ""
+  // How the measured spread changed the projected rate (not shown once already critical).
+  const spread =
+    !critical && spreadCoverage !== null && spreadFactor !== null
+      ? ` Rust is found across ${Math.round(spreadCoverage * 100)}% of the surface, so the projected rate is scaled ×${spreadFactor.toFixed(2)}.`
+      : ""
+  return `ASTM D610 rating ${astmRating}. ${band}. Priority: ${priorityLevel}. ${timeline}${spread}`.trim()
 }
