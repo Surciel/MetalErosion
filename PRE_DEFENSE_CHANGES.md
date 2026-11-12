@@ -422,7 +422,7 @@ The upload is now checked in this order. Anything rejected is never uploaded or 
 | Asset category is one of the known ones | Rejected (400). Before, an unknown category silently used a default rate. |
 | Real file format is JPEG, PNG or WebP, read from the file's bytes | Rejected (400 `unsupported_format`). |
 | The file decodes as an image | Rejected (400 `invalid_image`). |
-| Shortest side is at least 200 px | Rejected (422 `too_small`). |
+| Shortest side is at least 64 px | Rejected (422 `too_small`). |
 | Lighting (existing check) | Rejected (422 `poor_lighting`) or analysed with a warning. |
 | **Sharpness** | Very blurry: rejected (422 `too_blurry`). Slightly blurry: analysed with a warning. |
 | Metal present (existing check) | Rejected (422 `not_metal`). |
@@ -430,7 +430,7 @@ The upload is now checked in this order. Anything rejected is never uploaded or 
 
 - **How sharpness is measured:** edge strength (variance of the Laplacian) in each cell of a 6×6 grid on the photo scaled to 640 px; the score is the 90th percentile cell, so a sharp object in front of a blurred background still passes.
 - **Where the thresholds come from:** on 117 real photos (your 12 scans and the 105 test images) the lowest score was 63. Moderately blurred copies scored under 15 and lightly blurred ones around 27. Photos below **12** are rejected and below **40** get the warning. The constants are at the top of `backend/image_quality.py`.
-- **Minimum size is 200 px,** not the 320 px first planned, because one valid test-set photo is 205 px on its shortest side.
+- **Minimum size is 64 px.** It was first set to 200 px, but a test on the team's 132 real scan photos showed that rejected 7 genuine metal photos (small web images, 95 to 180 px on their shortest side). At 64 px only empty or icon-sized files are blocked.
 - **Images are stored with their real format.** Before, anything that wasn't a JPEG was saved as `.png`.
 - **Warnings** are returned as `quality_warnings` and saved with the scan, so they also show in History.
 - **Rejections are logged** (user, reason, time; no image) in a new `scan_rejections` table for the admin chart. If the table doesn't exist yet, the scan is still rejected normally.
@@ -531,6 +531,25 @@ The "Now" column was re-measured on this machine and matches the colleague's fig
 | Tested configuration | 74 of 81 | 21 of 24 | 73.0% | 2 of 10 | Scissors read 0% |
 | `RUST_CONFIDENCE=0.10` | 74 of 81 | 21 of 24 | 70.3% | 3 of 10 | Scissors read 51.3% |
 | `VALIDATION_CONFIDENCE=0.15` | 78 of 81 | 21 of 24 | 69.2% | 2 of 10 | Wrench accepted but read as 0% rust |
+
+**Second test, on the team's own scan photos.** The 132 distinct photos in Supabase storage were sorted by eye into 96 metal, 29 non-metal and 7 unclear (left out). There are no annotations for these, so the rust figures below are judged by eye, not against labels.
+
+| | Result with the tested settings |
+|---|---|
+| Metal accepted | 84 of 96 (87.5%) |
+| Non-metal rejected | 25 of 29 (86.2%) |
+| Visibly rusted photos read as under 1% rust | 4 of 81 |
+
+- **Metal rejected by the classifier (7):** clean scissors with red handles, aluminium profiles, a copper sheet, a rusty bolt on gravel, a pile of rusty bicycles, two rust-spotted painted sheets.
+- **Metal the segmentation model could not find (5):** four rusty cars and the rusty wrench.
+- **Non-metal accepted (4):** an orange wall, red felt, a brown wooden door, an autumn forest with colour swatches.
+- **Rust read as under 1% (4):** the rusted scissors, the pruner, and two rusty car photos.
+- The failing photos are collected in `Downloads\rustscan_failure_photos\` as examples for retraining.
+
+**Things tried that did not help**
+- **A second "close-up" segmentation pass** (`RESCAN_METAL_CROP`, off by default). It changed the rust % on 1 to 3 of the 105 test photos and fixed none of the real-photo cases.
+- **Auditing the training labels.** They are consistent: 692 images have rust patches on a metal outline, 138 are fully rusted objects with matching outlines, and only 4 have rust with no metal outline.
+- **Lowering the classifier threshold.** At 0.2 it recovers 1 real metal photo; at 0.15 it also lets 2 more non-metal test photos through.
 
 **Known limitations** (state these at the defense):
 - Close-up non-metal textures (fabric, leather, paper) can still be accepted.

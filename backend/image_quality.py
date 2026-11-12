@@ -23,7 +23,9 @@ PNG = (".png", "image/png")
 WEBP = (".webp", "image/webp")
 
 # Photos smaller than this on their shortest side carry too little detail to analyse.
-MIN_IMAGE_SIDE = 200
+# Kept low on purpose: 7 of 96 real metal scan photos were 95 to 180 px on their shortest
+# side (small web images), and a 200 px minimum rejected all of them.
+MIN_IMAGE_SIDE = 64
 
 # Sharpness = variance of the Laplacian (edge strength), measured per block on a 6x6
 # grid of the photo scaled to 640 px; the 90th percentile block is used so a sharp
