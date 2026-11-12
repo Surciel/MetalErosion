@@ -81,6 +81,30 @@ After both deploys are Live:
 
 ### Memory troubleshooting
 
+Render Free now opts into `MODEL_IMAGE_SIZE=512` and `INFERENCE_MAX_SIDE=512`.
+This was selected to reduce peak inference memory after the 1024px deployment
+continued restarting. The model weights and confidence thresholds remain the same,
+but 512px can miss fine rust details. The published 1024px results must not be
+treated as accuracy validation for this mode. Running Python directly retains
+1024px defaults; Docker defaults and `render.yaml` explicitly use 512px.
+
+`MAX_IMAGE_PIXELS=4194304` limits the decoded image to approximately 4.2 MP (for
+example, 2048 x 2048). Oversized images receive HTTP 413 before pixel decoding,
+with instructions to resize. One scan is admitted at a time; a simultaneous scan
+receives HTTP 503 and `Retry-After: 5` instead of allocating another image.
+Scans run in FastAPI's worker thread pool so the event loop can serve health probes.
+Previous prediction inputs/results are released after each scan, while model
+weights and warmup state are kept. Stage-specific RSS logs identify where a
+remaining memory peak occurs. These bounds still need a real scan and peak-memory
+check on Render; they are not a guarantee that every scan fits within 512 MiB.
+
+The headless Ultralytics distribution avoids installing desktop OpenCV alongside
+headless OpenCV. OpenCV uses one thread in addition to the numerical-library limits.
+Docker runs both bundled models twice on a synthetic 2048 x 2048 image and logs
+stage RSS/peak RSS. The build fails above a 480 MiB synthetic peak, preserving
+headroom beneath 512 MiB. This fixture does not validate accuracy or every real
+photo's detection-mask allocations, so a real scan still needs verification.
+
 A passing `/health` request confirms model loading, not that a full scan fits in
 512 MiB. The original PyTorch process was observed using about 423-443 MiB before
 analysis and was restarted after exceeding the Free plan's memory limit.
@@ -115,6 +139,21 @@ If a payment method is attached, excess bandwidth or build usage can incur
 charges even when the service's compute plan is Free. The service configuration
 cannot impose a global zero-dollar bandwidth cap. Check Billing and the build
 pipeline spend limit before deploying; no paid resources should be enabled.
+
+## Latest memory fix: changed files
+
+| File | Change |
+| --- | --- |
+| `backend/main.py` | Configurable inference resolution; decoded-pixel validation; one active scan; synchronous scan handler in the request thread pool; one OpenCV thread; per-mask thresholding; cleanup and stage memory logs; active limits in `/health`. |
+| `backend/memory_limits.py` | Lazy image-header validation, nonblocking scan gate, predictor-input cleanup and Linux RSS measurement. |
+| `backend/requirements.txt` | Headless Ultralytics distribution, explicit Pillow dependency, UTF-8 encoding in place of UTF-16. |
+| `backend/Dockerfile` | 512px/4.2MP defaults, required helper files, headless runtime libraries, build-time guard tests and actual-model memory preflight. |
+| `backend/.dockerignore` | Include the new helper and verification scripts in the otherwise restricted build context. |
+| `backend/tools/verify_memory_limits.py` | Six tests covering lazy size checks, invalid headers, scan exclusion, exception recovery and cleanup without unloading weights. |
+| `backend/tools/verify_inference_memory.py` | Two offline runs of both bundled models with a maximum-size synthetic image, memory logging and a 480 MiB peak budget. |
+| `backend/.env.example` | Document the optional low-memory deployment settings. |
+| `render.yaml` | Preserve Free service configuration with explicit 512px inference and a 4,194,304-pixel limit. |
+| `RENDER_DOCKER_DEPLOYMENT.md` | Explain memory limits, accuracy tradeoff, validation and this file list. |
 
 ## Optional local container test
 

@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 from uuid import UUID, uuid4
 
 import cv2
@@ -25,14 +25,20 @@ from image_quality import (
     detect_image_format,
 )
 from predictive_engine import ISOPredictiveEngine
+from memory_limits import (
+    ImagePixelLimitError, InvalidImageHeaderError, ScanBusyError, SingleScanGate,
+    checked_image_dimensions, current_rss_mib, release_predictor_inputs,
+)
 from rust_measurement import colour_rust_mask, rust_patch_boxes
 from spread_analysis import classify_distribution
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 BASE_DIR = Path(__file__).resolve().parent
 # Deployment environment variables take precedence over a local .env file.
 load_dotenv(BASE_DIR / ".env", override=False)
+# OpenCV's own thread pool is independent of the BLAS/OpenMP limits.
+cv2.setNumThreads(1)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
@@ -103,8 +109,14 @@ METAL_CONFIDENCE = float(os.getenv("METAL_CONFIDENCE", str(MODEL_CONFIDENCE)))
 RUST_CONFIDENCE = float(os.getenv("RUST_CONFIDENCE", str(MODEL_CONFIDENCE)))
 RUST_MIN_METAL_OVERLAP = float(os.getenv("RUST_MIN_METAL_OVERLAP", "0.5"))
 MODEL_IOU = 0.45
-MODEL_IMAGE_SIZE = 1024  # Matches the training imgsz of the segmentation model.
-INFERENCE_MAX_SIDE = 1024  # Large photos are downscaled first to bound mask memory.
+# Defaults retain the tested 1024px setup. Render Free explicitly opts into 512px,
+# which reduces peak memory but needs a separate accuracy evaluation.
+MODEL_IMAGE_SIZE = int(os.getenv("MODEL_IMAGE_SIZE", "1024"))
+INFERENCE_MAX_SIDE = int(os.getenv("INFERENCE_MAX_SIDE", "1024"))
+if MODEL_IMAGE_SIZE < 128 or MODEL_IMAGE_SIZE > 2048 or MODEL_IMAGE_SIZE % 32:
+    raise RuntimeError("MODEL_IMAGE_SIZE must be a multiple of 32 between 128 and 2048.")
+if not 64 <= INFERENCE_MAX_SIDE <= MODEL_IMAGE_SIZE:
+    raise RuntimeError("INFERENCE_MAX_SIDE must be between 64 and MODEL_IMAGE_SIZE.")
 # Input validation ("error dropping"). Metal is checked first: the photo must contain a
 # confidently detected metal surface covering a minimum share of the image. Fully
 # corroded objects (no metal visible, only rust) pass only through a confident rust
@@ -131,6 +143,10 @@ RESCAN_METAL_CROP = os.getenv("RESCAN_METAL_CROP", "false").strip().lower() in (
 RESCAN_PADDING = 0.05  # Margin kept around the metal, as a share of the image's longer side.
 RESCAN_MAX_CROP_SHARE = float(os.getenv("RESCAN_MAX_CROP_SHARE", "0.7"))  # Skip when the metal fills more of the frame than this.
 MAX_IMAGE_BYTES = 15 * 1024 * 1024
+MAX_IMAGE_PIXELS = int(os.getenv("MAX_IMAGE_PIXELS", "16777216"))
+if MAX_IMAGE_PIXELS < 1:
+    raise RuntimeError("MAX_IMAGE_PIXELS must be positive.")
+scan_gate = SingleScanGate()
 # Below this share of the photo, the metal is analysed but flagged as small in the frame.
 SMALL_SURFACE_RATIO = 0.15
 
@@ -171,7 +187,24 @@ def health() -> dict[str, Any]:
         "status": "ok",
         "segmentation_model_loaded": model is not None,
         "metal_classifier_loaded": metal_classifier is not None,
+        "inference_image_size": MODEL_IMAGE_SIZE,
+        "max_image_pixels": MAX_IMAGE_PIXELS,
     }
+
+
+def _scan_slot() -> Iterator[None]:
+    try:
+        with scan_gate.slot():
+            try:
+                yield
+            finally:
+                try:
+                    release_predictor_inputs(model, metal_classifier)
+                except Exception:
+                    logger.warning("Could not release previous prediction inputs", exc_info=True)
+                logger.info("Scan memory stage=cleanup rss_mib=%s", current_rss_mib())
+    except ScanBusyError as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={"Retry-After": "5"}) from exc
 
 
 def metal_probability(image: np.ndarray) -> Optional[float]:
@@ -413,10 +446,11 @@ def _rescan_metal_crop(
 
     crop_rust = np.zeros(crop.shape[:2], dtype=np.uint8)
     for class_id, mask in zip(
-        result.boxes.cls.cpu().numpy().astype(int), result.masks.data.cpu().numpy() > 0.5
+        result.boxes.cls.cpu().numpy().astype(int), result.masks.data.cpu().numpy()
     ):
         if class_id != RUST_CLASS_ID:
             continue
+        mask = mask > 0.5
         if mask.shape != crop_rust.shape:
             mask = cv2.resize(
                 mask.astype(np.uint8),
@@ -477,9 +511,12 @@ def _segment_surface(image: np.ndarray) -> SurfaceSegmentation:
     classes = result.boxes.cls.cpu().numpy().astype(int)
     confidences = result.boxes.conf.cpu().numpy()
     boxes = result.boxes.xyxy.cpu().numpy()
-    raw_masks = result.masks.data.cpu().numpy() > 0.5
+    # Threshold one detection at a time, rather than allocating another full
+    # N x height x width boolean stack alongside the model's mask tensor.
+    raw_masks = result.masks.data.cpu().numpy()
 
     def _sized(mask: np.ndarray) -> np.ndarray:
+        mask = mask > 0.5
         if mask.shape == shape:
             return mask
         return cv2.resize(
@@ -661,18 +698,19 @@ def _insert_scan(payload: dict[str, Any]) -> Any:
 
 @app.post("/analyze-asset")
 @app.post("/analyze-corrosion")
-async def analyze_corrosion(
+def analyze_corrosion(
     file: UploadFile = File(...),
     asset_category: str = Form("Hardware"),
     title: str = Form(""),
     submitted_user_id: Optional[str] = Form(default=None),
     user: dict[str, Any] = Depends(current_user),
+    _slot: None = Depends(_scan_slot),
 ) -> dict[str, Any]:
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image.")
 
     # Do not allocate an unbounded bytes object before enforcing the upload cap.
-    contents = await file.read(MAX_IMAGE_BYTES + 1)
+    contents = file.file.read(MAX_IMAGE_BYTES + 1)
     if not contents or len(contents) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Image is empty or too large.")
     if submitted_user_id and submitted_user_id != user["id"]:
@@ -702,12 +740,25 @@ async def analyze_corrosion(
         )
     file_extension, content_type = image_format
 
+    # Compressed size does not bound decoded RAM. Read dimensions before OpenCV
+    # allocates the full image, so oversized photos receive a useful error.
+    try:
+        image_width, image_height = checked_image_dimensions(contents, MAX_IMAGE_PIXELS)
+    except ImagePixelLimitError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except InvalidImageHeaderError as exc:
+        raise _reject_scan(user, "invalid_image", str(exc), status_code=400) from exc
+    logger.info(
+        "Scan memory stage=decode_start rss_mib=%s pixels=%d bytes=%d",
+        current_rss_mib(), image_width * image_height, len(contents),
+    )
     image = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
     if image is None or image.size == 0:
         raise _reject_scan(
             user, "invalid_image", "The uploaded file is not a valid image.", status_code=400
         )
 
+    logger.info("Scan memory stage=decoded rss_mib=%s", current_rss_mib())
     if min(image.shape[:2]) < MIN_IMAGE_SIDE:
         raise _reject_scan(
             user,
@@ -741,6 +792,7 @@ async def analyze_corrosion(
         )
 
     # Stage 1: whole-image metal check (skipped when no classifier is installed).
+    logger.info("Scan memory stage=classify_start rss_mib=%s", current_rss_mib())
     if not passes_metal_classifier(image):
         raise _reject_scan(
             user,
@@ -752,7 +804,9 @@ async def analyze_corrosion(
 
     # Stage 2: locate the metal and the rust on it.
     try:
+        logger.info("Scan memory stage=segment_start rss_mib=%s imgsz=%d", current_rss_mib(), MODEL_IMAGE_SIZE)
         segmentation = _segment_surface(image)
+        logger.info("Scan memory stage=segment_complete rss_mib=%s", current_rss_mib())
     except Exception as exc:
         logger.exception("Corrosion model inference failed")
         raise HTTPException(

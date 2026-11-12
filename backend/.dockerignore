@@ -6,11 +6,14 @@
 !requirements.txt
 !main.py
 !image_quality.py
+!memory_limits.py
 !predictive_engine.py
 !rust_measurement.py
 !spread_analysis.py
 !tools/
 !tools/verify_memory_optimizations.py
+!tools/verify_memory_limits.py
+!tools/verify_inference_memory.py
 !models/
 !models/best.pt
 !models/metal_cls.pt
