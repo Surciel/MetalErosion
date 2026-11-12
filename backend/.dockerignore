@@ -1,0 +1,14 @@
+# Allow only files required to build and run the API. Never send .env files,
+# local environments, uploads, logs, or credentials to Docker.
+**
+!Dockerfile
+!.dockerignore
+!requirements.txt
+!main.py
+!image_quality.py
+!predictive_engine.py
+!rust_measurement.py
+!spread_analysis.py
+!models/
+!models/best.pt
+!models/metal_cls.pt

@@ -66,25 +66,33 @@ Enable Email provider and Confirm email in Authentication > Providers. Configure
 
 ## Render backend
 
-Create a Python web service from the `backend` directory. Use the repository's Python requirements and start FastAPI with a Render-compatible command, for example:
-
-```text
-uvicorn main:app --host 0.0.0.0 --port $PORT
-```
+Deploy using the Docker setup in
+[RENDER_DOCKER_DEPLOYMENT.md](RENDER_DOCKER_DEPLOYMENT.md). The root `render.yaml`
+defines the backend service. For manual Web Service creation, choose Docker,
+leave Root Directory blank, set Dockerfile Path to `./backend/Dockerfile` and
+Docker Build Context Directory to `./backend`. Leave Docker Command blank and
+set Health Check Path to `/health`.
 
 Set these server-only variables in Render:
 
 ```text
 SUPABASE_URL=https://<project-ref>.supabase.co
-SUPABASE_KEY=<server-only-supabase-key>
+SUPABASE_SERVICE_ROLE_KEY=<server-only-supabase-service-role-key>
 SUPABASE_STORAGE_BUCKET=metal-scans
 SUPABASE_STORAGE_PRIVATE=true
 SUPABASE_SIGNED_URL_TTL=3600
 FRONTEND_ORIGINS=https://<vercel-project>.vercel.app,https://<your-domain>
 MODEL_PATH=models/best.pt
+METAL_CLASSIFIER_PATH=models/metal_cls.pt
+RUST_MEASUREMENT=hybrid
+METAL_CLASSIFIER_THRESHOLD=0.4
+MODEL_CONFIDENCE=0.15
+VALIDATION_CONFIDENCE=0.5
+MIN_SURFACE_AREA_RATIO=0.05
 ```
 
-Keep `SUPABASE_KEY` on Render only. It must never be bundled into the Vercel frontend.
+Keep `SUPABASE_SERVICE_ROLE_KEY` on Render only. It must never be bundled into the
+Vercel frontend. The legacy `SUPABASE_KEY` name remains supported by the backend.
 
 Validate the YOLO model size, memory use, cold-start time, and request timeout on Render before the defense.
 

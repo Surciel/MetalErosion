@@ -1,0 +1,40 @@
+# Backend only; the frontend stays on Vercel.
+services:
+  - type: web
+    name: metalerosion-api
+    runtime: docker
+    region: singapore
+    # Paid 2 GB starting point for two YOLO models; measure inference RAM before
+    # choosing a smaller plan. Creating this Blueprint incurs service charges.
+    plan: 1c-2g
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: FRONTEND_ORIGINS
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: metal-scans
+      - key: SUPABASE_STORAGE_PRIVATE
+        value: "true"
+      - key: SUPABASE_SIGNED_URL_TTL
+        value: "3600"
+      - key: MODEL_PATH
+        value: models/best.pt
+      - key: METAL_CLASSIFIER_PATH
+        value: models/metal_cls.pt
+      - key: RUST_MEASUREMENT
+        value: hybrid
+      - key: METAL_CLASSIFIER_THRESHOLD
+        value: "0.4"
+      - key: MODEL_CONFIDENCE
+        value: "0.15"
+      - key: VALIDATION_CONFIDENCE
+        value: "0.5"
+      - key: MIN_SURFACE_AREA_RATIO
+        value: "0.05"

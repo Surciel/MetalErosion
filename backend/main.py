@@ -31,7 +31,8 @@ from spread_analysis import classify_distribution
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env", override=True)
+# Deployment environment variables take precedence over a local .env file.
+load_dotenv(BASE_DIR / ".env", override=False)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
@@ -53,7 +54,9 @@ FRONTEND_ORIGINS = [
 ]
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be configured.")
+    raise RuntimeError(
+        "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_KEY) must be configured."
+    )
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 app = FastAPI(title="MetalErosion API", version="1.0")
@@ -155,6 +158,20 @@ if METAL_CLASSIFIER_PATH.exists():
             f"{METAL_CLASSIFIER_PATH} has no 'metal' class "
             f"(found {list(metal_classifier.names.values())})."
         )
+
+
+@app.get("/health")
+def health() -> dict[str, Any]:
+    """Fast readiness probe, available after model loading and validation.
+
+    This does not make a Supabase request or run inference. Remote dependency
+    availability is checked separately during the deployment smoke test.
+    """
+    return {
+        "status": "ok",
+        "segmentation_model_loaded": model is not None,
+        "metal_classifier_loaded": metal_classifier is not None,
+    }
 
 
 def metal_probability(image: np.ndarray) -> Optional[float]:
