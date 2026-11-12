@@ -11,6 +11,20 @@ services:
     healthCheckPath: /health
     autoDeployTrigger: commit
     envVars:
+      # Bound CPU-library thread pools and allocator/cache retention on Free.
+      # This does not guarantee that inference fits within 512 MiB.
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+      - key: MALLOC_TRIM_THRESHOLD_
+        value: "131072"
+      - key: ONEDNN_PRIMITIVE_CACHE_CAPACITY
+        value: "0"
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY

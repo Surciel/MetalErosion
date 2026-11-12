@@ -671,7 +671,8 @@ async def analyze_corrosion(
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image.")
 
-    contents = await file.read()
+    # Do not allocate an unbounded bytes object before enforcing the upload cap.
+    contents = await file.read(MAX_IMAGE_BYTES + 1)
     if not contents or len(contents) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Image is empty or too large.")
     if submitted_user_id and submitted_user_id != user["id"]:

@@ -9,6 +9,8 @@
 !predictive_engine.py
 !rust_measurement.py
 !spread_analysis.py
+!tools/
+!tools/verify_memory_optimizations.py
 !models/
 !models/best.pt
 !models/metal_cls.pt

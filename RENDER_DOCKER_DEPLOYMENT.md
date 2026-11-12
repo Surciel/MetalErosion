@@ -79,6 +79,29 @@ After both deploys are Live:
 
 ## Free-tier behavior and spending
 
+### Memory troubleshooting
+
+A passing `/health` request confirms model loading, not that a full scan fits in
+512 MiB. The original PyTorch process was observed using about 423-443 MiB before
+analysis and was restarted after exceeding the Free plan's memory limit.
+
+The backend configuration bounds OpenBLAS, OpenMP, and MKL to one thread, limits
+glibc allocation arenas, requests trimming of releasable heap memory, and disables
+the oneDNN primitive cache. These are memory-reduction measures, not a hard cap
+on inference allocations. The same settings were applied directly to the running
+Render backend; `render.yaml` and the Docker defaults preserve them for later builds.
+
+The source also computes the existing one-feature OLS slope with NumPy instead of
+importing scikit-learn at API startup, and measures full-resolution lighting in
+64-row strips instead of allocating a full LAB copy of every upload. Neither
+change reduces inference resolution or changes the trained model weights or
+configured thresholds. Source changes take effect only after pushing `Test-Deploy`.
+
+Validate a complete scan and peak memory after deployment. If the backend still
+exceeds 512 MiB, a smaller inference runtime (for example, validated ONNX exports)
+or a different inference host is required. Do not claim that allocator tuning
+alone guarantees Free-plan compatibility, and do not enable a paid plan.
+
 The Free backend has 512 MB RAM and 0.1 CPU. It sleeps after 15 minutes without
 inbound traffic and cold starts on the next request. The two YOLO models may
 exceed the memory limit during startup or inference. A successful image build

@@ -115,10 +115,21 @@ class LightingAssessment:
 
 
 def assess_lighting(image_bgr: np.ndarray) -> LightingAssessment:
-    lightness = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB)[:, :, 0]
-    mean_lightness = float(lightness.mean())
-    dark_share = float((lightness <= DARK_PIXEL_LEVEL).mean())
-    clipped_share = float((lightness >= CLIPPED_PIXEL_LEVEL).mean())
+    # Preserve the full-resolution pixel measurements without retaining another
+    # full RGB-sized LAB image (36 MB for a 12 MP photo). Each strip uses the same
+    # BGR-to-LAB conversion and thresholds as the original full-image operation.
+    total_lightness = 0
+    dark_pixels = 0
+    clipped_pixels = 0
+    pixel_count = image_bgr.shape[0] * image_bgr.shape[1]
+    for top in range(0, image_bgr.shape[0], 64):
+        lightness = cv2.cvtColor(image_bgr[top : top + 64], cv2.COLOR_BGR2LAB)[:, :, 0]
+        total_lightness += int(lightness.sum(dtype=np.uint64))
+        dark_pixels += int(np.count_nonzero(lightness <= DARK_PIXEL_LEVEL))
+        clipped_pixels += int(np.count_nonzero(lightness >= CLIPPED_PIXEL_LEVEL))
+    mean_lightness = total_lightness / pixel_count
+    dark_share = dark_pixels / pixel_count
+    clipped_share = clipped_pixels / pixel_count
 
     if mean_lightness < REJECT_MEAN_DARK or dark_share >= REJECT_DARK_SHARE:
         status = "too_dark"

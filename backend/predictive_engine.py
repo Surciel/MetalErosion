@@ -1,7 +1,6 @@
 from typing import Optional
 
 import numpy as np
-from sklearn.linear_model import LinearRegression
 
 # ASTM D610 rust grade scale: (maximum rusted surface %, grade, remediation protocol).
 ASTM_D610_SCALE = [
@@ -67,12 +66,15 @@ class ISOPredictiveEngine:
             rust_percentage = (days * base_slope) + noise
             rust_percentage = np.clip(rust_percentage, 0, 100)
 
-            # Scikit-Learn fits the line of best fit through the synthetic scatterplot
-            model = LinearRegression()
-            model.fit(days, rust_percentage)
-
-            # Store the mathematically calculated slope for future predictions
-            self.trained_models[category] = model.coef_[0][0]
+            # The same ordinary least-squares slope with an intercept, computed
+            # directly for this one-feature regression. Avoid importing the full
+            # scikit-learn/SciPy stack into the memory-limited API process.
+            centered_days = days[:, 0] - days.mean()
+            centered_rust = rust_percentage[:, 0] - rust_percentage.mean()
+            self.trained_models[category] = float(
+                np.dot(centered_days, centered_rust)
+                / np.dot(centered_days, centered_days)
+            )
 
     @staticmethod
     def astm_grade(current_rust_percentage: float) -> tuple[int, str]:

@@ -24,6 +24,10 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PORT=10000 \
     OMP_NUM_THREADS=1 \
     MKL_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    MALLOC_ARENA_MAX=2 \
+    MALLOC_TRIM_THRESHOLD_=131072 \
+    ONEDNN_PRIMITIVE_CACHE_CAPACITY=0 \
     YOLO_CONFIG_DIR=/tmp/Ultralytics
 
 # Ultralytics also depends on opencv-python; these libraries allow its OpenCV
@@ -39,6 +43,12 @@ COPY --from=dependencies /opt/venv /opt/venv
 COPY --chown=app:app main.py image_quality.py predictive_engine.py rust_measurement.py spread_analysis.py ./
 COPY --chown=app:app models/best.pt models/metal_cls.pt ./models/
 RUN test -s models/best.pt && test -s models/metal_cls.pt
+
+# Use the container's compatible NumPy/OpenCV wheels to verify numerical parity.
+# scikit-learn is imported only by this build-time process, never by the API.
+COPY tools/verify_memory_optimizations.py /tmp/verify_memory_optimizations.py
+RUN PYTHONPATH=/app python /tmp/verify_memory_optimizations.py \
+    && rm /tmp/verify_memory_optimizations.py
 
 USER app
 # Catch missing shared libraries or an accidental CUDA build during image build,
