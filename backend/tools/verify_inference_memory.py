@@ -6,6 +6,7 @@ validate accuracy or bound every real photo's number of detection masks.
 
 import os
 import resource
+import sys
 from unittest.mock import patch
 
 import cv2
@@ -15,10 +16,14 @@ import numpy as np
 os.environ["SUPABASE_URL"] = "https://offline.invalid"
 os.environ["SUPABASE_KEY"] = "offline-build-only"
 os.environ["SUPABASE_SERVICE_ROLE_KEY"] = "offline-build-only"
+# Match the deployment's lowest detection threshold and rust measurement mode.
+os.environ["MODEL_CONFIDENCE"] = "0.15"
+os.environ["RUST_MEASUREMENT"] = "hybrid"
 with patch("supabase.create_client"):
     import main
 
 from memory_limits import current_rss_mib, release_predictor_inputs
+from onnx_inference import native_masks
 
 
 def checkpoint(stage: str) -> None:
@@ -27,6 +32,8 @@ def checkpoint(stage: str) -> None:
 
 
 assert main.MODEL_IMAGE_SIZE == 512 and main.INFERENCE_MAX_SIDE == 512
+assert main.INFERENCE_BACKEND == "onnx"
+assert not any(name in sys.modules for name in ("torch", "torchvision", "ultralytics"))
 assert main.metal_classifier is not None, "Both deployment models must be tested"
 checkpoint("loaded")
 side = int(main.MAX_IMAGE_PIXELS ** 0.5)
@@ -48,6 +55,22 @@ for attempt in range(2):
     segmentation = main._segment_surface(image)
     assert segmentation.surface_mask.shape == (512, 512)
     checkpoint(f"segmented_{attempt + 1}")
+    if attempt == 1:
+        # Synthetic images may produce zero detections. Also exercise the
+        # supported 300-mask worst case, including the nonempty-mask selection
+        # copy, while the largest upload and both model sessions are still live.
+        coefficients = np.ones((300, 32), dtype=np.float32)
+        coefficients[-1] = 0  # Force one empty mask so partial filtering allocates.
+        masks = native_masks(
+            np.ones((32, 128, 128), dtype=np.float32),
+            coefficients,
+            np.tile(np.array([0, 0, 512, 512], dtype=np.float32), (300, 1)),
+            (512, 512), main.model.mask_mode, main.model.crop_mode,
+        )
+        retained_masks = masks[masks.any(axis=(1, 2))]
+        assert retained_masks.shape == (299, 512, 512)
+        checkpoint("maximum_detection_masks")
+        del masks, retained_masks, coefficients
     del segmentation, image, contents
     release_predictor_inputs(main.model, main.metal_classifier)
     checkpoint(f"cleanup_{attempt + 1}")

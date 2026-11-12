@@ -1,0 +1,12 @@
+# Render's runtime deliberately excludes PyTorch, torchvision and Ultralytics.
+# requirements.txt remains the local development/export dependency list.
+fastapi
+uvicorn
+python-multipart
+opencv-python-headless
+onnxruntime
+supabase
+python-dotenv
+numpy
+pydantic
+Pillow

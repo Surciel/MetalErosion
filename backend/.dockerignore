@@ -4,9 +4,11 @@
 !Dockerfile
 !.dockerignore
 !requirements.txt
+!requirements-runtime.txt
 !main.py
 !image_quality.py
 !memory_limits.py
+!onnx_inference.py
 !predictive_engine.py
 !rust_measurement.py
 !spread_analysis.py
@@ -14,6 +16,8 @@
 !tools/verify_memory_optimizations.py
 !tools/verify_memory_limits.py
 !tools/verify_inference_memory.py
+!tools/export_onnx_models.py
+!tools/verify_onnx_postprocessing.py
 !models/
 !models/best.pt
 !models/metal_cls.pt

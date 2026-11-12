@@ -26,6 +26,8 @@ services:
       - key: ONEDNN_PRIMITIVE_CACHE_CAPACITY
         value: "0"
       # User-approved low-memory mode; validate accuracy separately from 1024px.
+      - key: INFERENCE_BACKEND
+        value: onnx
       - key: MODEL_IMAGE_SIZE
         value: "512"
       - key: INFERENCE_MAX_SIDE

@@ -16,7 +16,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from supabase import Client, create_client
 from supabase_auth.errors import AuthError
-from ultralytics import YOLO
 
 from image_quality import (
     MIN_IMAGE_SIDE,
@@ -37,6 +36,13 @@ logger = logging.getLogger("uvicorn.error")
 BASE_DIR = Path(__file__).resolve().parent
 # Deployment environment variables take precedence over a local .env file.
 load_dotenv(BASE_DIR / ".env", override=False)
+INFERENCE_BACKEND = os.getenv("INFERENCE_BACKEND", "pytorch").lower()
+if INFERENCE_BACKEND == "onnx":
+    from onnx_inference import OnnxModel as YOLO
+elif INFERENCE_BACKEND == "pytorch":
+    from ultralytics import YOLO
+else:
+    raise RuntimeError("INFERENCE_BACKEND must be 'onnx' or 'pytorch'.")
 # OpenCV's own thread pool is independent of the BLAS/OpenMP limits.
 cv2.setNumThreads(1)
 
@@ -45,6 +51,9 @@ SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY
 SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "metal-scans")
 SUPABASE_SIGNED_URL_TTL = int(os.getenv("SUPABASE_SIGNED_URL_TTL", "3600"))
 configured_model_path = Path(os.getenv("MODEL_PATH", "models/best.pt"))
+if INFERENCE_BACKEND == "onnx":
+    # Existing Render environment settings may still name the source .pt file.
+    configured_model_path = configured_model_path.with_suffix(".onnx")
 MODEL_PATH = str(
     configured_model_path
     if configured_model_path.is_absolute()
@@ -117,6 +126,8 @@ if MODEL_IMAGE_SIZE < 128 or MODEL_IMAGE_SIZE > 2048 or MODEL_IMAGE_SIZE % 32:
     raise RuntimeError("MODEL_IMAGE_SIZE must be a multiple of 32 between 128 and 2048.")
 if not 64 <= INFERENCE_MAX_SIDE <= MODEL_IMAGE_SIZE:
     raise RuntimeError("INFERENCE_MAX_SIDE must be between 64 and MODEL_IMAGE_SIZE.")
+if INFERENCE_BACKEND == "onnx" and model.size != MODEL_IMAGE_SIZE:
+    raise RuntimeError(f"MODEL_IMAGE_SIZE must match the ONNX export ({model.size}).")
 # Input validation ("error dropping"). Metal is checked first: the photo must contain a
 # confidently detected metal surface covering a minimum share of the image. Fully
 # corroded objects (no metal visible, only rust) pass only through a confident rust
@@ -154,6 +165,8 @@ SMALL_SURFACE_RATIO = 0.15
 # answers "metal or not" before the segmentation model runs. It is used only if the
 # model file exists; without it the segmentation-based metal check still applies.
 configured_classifier_path = Path(os.getenv("METAL_CLASSIFIER_PATH", "models/metal_cls.pt"))
+if INFERENCE_BACKEND == "onnx":
+    configured_classifier_path = configured_classifier_path.with_suffix(".onnx")
 METAL_CLASSIFIER_PATH = (
     configured_classifier_path
     if configured_classifier_path.is_absolute()
@@ -166,6 +179,8 @@ if METAL_CLASSIFIER_PATH.exists():
     metal_classifier = YOLO(str(METAL_CLASSIFIER_PATH))
     if metal_classifier.task != "classify":
         raise RuntimeError(f"{METAL_CLASSIFIER_PATH} is not a classification model.")
+    if INFERENCE_BACKEND == "onnx" and metal_classifier.size != 224:
+        raise RuntimeError("The classifier ONNX export must use a 224px input.")
     for _classifier_id, _classifier_name in metal_classifier.names.items():
         if str(_classifier_name).lower() == "metal":
             METAL_CLASSIFIER_METAL_ID = int(_classifier_id)
@@ -185,6 +200,7 @@ def health() -> dict[str, Any]:
     """
     return {
         "status": "ok",
+        "inference_backend": INFERENCE_BACKEND,
         "segmentation_model_loaded": model is not None,
         "metal_classifier_loaded": metal_classifier is not None,
         "inference_image_size": MODEL_IMAGE_SIZE,

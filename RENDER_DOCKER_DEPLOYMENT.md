@@ -71,7 +71,7 @@ After both deploys are Live:
 
 - Open the frontend root and `/reset-password` directly.
 - Open `BACKEND_URL/health`. With the packaged models the response should be
-  `{"status":"ok","segmentation_model_loaded":true,"metal_classifier_loaded":true}`.
+  `{"status":"ok","inference_backend":"onnx","segmentation_model_loaded":true,"metal_classifier_loaded":true,"inference_image_size":512,"max_image_pixels":4194304}`.
 - Sign in, load history, analyze a valid metal image, reload, and confirm the scan
   and image persist in Supabase.
 - Check logs and RAM while analyzing. The health endpoint confirms initialization;
@@ -80,6 +80,34 @@ After both deploys are Live:
 ## Free-tier behavior and spending
 
 ### Memory troubleshooting
+
+The previous PyTorch build failed its memory preflight: 441.7 MiB after loading,
+596.4 MiB peak, and 545.0 MiB still resident after two scans and cleanup. Lowering
+inference resolution alone did not make that process fit the 512 MiB Free limit.
+
+Docker now exports the two existing `.pt` checkpoints to float32 ONNX during a
+separate build stage. The final server installs `requirements-runtime.txt` and
+contains ONNX Runtime and the exported weights, without PyTorch, torchvision,
+Ultralytics, scikit-learn, or pandas. Running Python directly still defaults to
+the existing PyTorch path. Existing Render `MODEL_PATH` and classifier `.pt`
+settings automatically resolve to sibling `.onnx` files when
+`INFERENCE_BACKEND=onnx`, so manual service environment settings need no migration.
+
+The exporter checks classifier preprocessing/probabilities, raw segmentation
+outputs, boxes, and masks against the original models on synthetic square,
+portrait and landscape inputs. Separate mask probes verify pixel rounding.
+The ONNX adapter uses square letterboxing for the fixed 512px export; previous
+PyTorch prediction used rectangular padding on non-square inputs, so the existing
+published accuracy results still require a separate evaluation for this mode.
+These checks cover conversion compatibility, not a real-photo accuracy study.
+
+The final image rejects accidental imports/installation of the export stack.
+It retains the same 480 MiB memory preflight with both real models and two 4.2 MP
+synthetic uploads, plus a 300-mask reconstruction stress check. Do not raise or
+remove that guard to make a failing build pass.
+ONNX Runtime sessions use one thread, with CPU arenas and memory-pattern caching
+disabled to limit retained allocations. A passing Docker preflight must still be
+followed by an authenticated scan and memory observation on Render.
 
 Render Free now opts into `MODEL_IMAGE_SIZE=512` and `INFERENCE_MAX_SIDE=512`.
 This was selected to reduce peak inference memory after the 1024px deployment
@@ -98,7 +126,7 @@ weights and warmup state are kept. Stage-specific RSS logs identify where a
 remaining memory peak occurs. These bounds still need a real scan and peak-memory
 check on Render; they are not a guarantee that every scan fits within 512 MiB.
 
-The headless Ultralytics distribution avoids installing desktop OpenCV alongside
+The export stage uses headless Ultralytics, and the final image only installs
 headless OpenCV. OpenCV uses one thread in addition to the numerical-library limits.
 Docker runs both bundled models twice on a synthetic 2048 x 2048 image and logs
 stage RSS/peak RSS. The build fails above a 480 MiB synthetic peak, preserving
@@ -121,10 +149,10 @@ importing scikit-learn at API startup, and measures full-resolution lighting in
 change reduces inference resolution or changes the trained model weights or
 configured thresholds. Source changes take effect only after pushing `Test-Deploy`.
 
-Validate a complete scan and peak memory after deployment. If the backend still
-exceeds 512 MiB, a smaller inference runtime (for example, validated ONNX exports)
-or a different inference host is required. Do not claim that allocator tuning
-alone guarantees Free-plan compatibility, and do not enable a paid plan.
+Validate a complete scan and peak memory after deployment. If the ONNX backend
+still exceeds 512 MiB, further runtime work or a different free inference host is
+required. Do not claim that allocator tuning alone guarantees Free-plan
+compatibility, and do not enable a paid plan.
 
 The Free backend has 512 MB RAM and 0.1 CPU. It sleeps after 15 minutes without
 inbound traffic and cold starts on the next request. The two YOLO models may
@@ -144,16 +172,17 @@ pipeline spend limit before deploying; no paid resources should be enabled.
 
 | File | Change |
 | --- | --- |
-| `backend/main.py` | Configurable inference resolution; decoded-pixel validation; one active scan; synchronous scan handler in the request thread pool; one OpenCV thread; per-mask thresholding; cleanup and stage memory logs; active limits in `/health`. |
-| `backend/memory_limits.py` | Lazy image-header validation, nonblocking scan gate, predictor-input cleanup and Linux RSS measurement. |
-| `backend/requirements.txt` | Headless Ultralytics distribution, explicit Pillow dependency, UTF-8 encoding in place of UTF-16. |
-| `backend/Dockerfile` | 512px/4.2MP defaults, required helper files, headless runtime libraries, build-time guard tests and actual-model memory preflight. |
-| `backend/.dockerignore` | Include the new helper and verification scripts in the otherwise restricted build context. |
-| `backend/tools/verify_memory_limits.py` | Six tests covering lazy size checks, invalid headers, scan exclusion, exception recovery and cleanup without unloading weights. |
-| `backend/tools/verify_inference_memory.py` | Two offline runs of both bundled models with a maximum-size synthetic image, memory logging and a 480 MiB peak budget. |
-| `backend/.env.example` | Document the optional low-memory deployment settings. |
-| `render.yaml` | Preserve Free service configuration with explicit 512px inference and a 4,194,304-pixel limit. |
-| `RENDER_DOCKER_DEPLOYMENT.md` | Explain memory limits, accuracy tradeoff, validation and this file list. |
+| `backend/main.py` | Select ONNX or local PyTorch at startup, map existing checkpoint paths to ONNX, expose the active runtime in `/health`. |
+| `backend/onnx_inference.py` | NumPy/Pillow/OpenCV preprocessing, CPU ONNX sessions, class-aware suppression, bounded mask reconstruction and the result fields used by the existing scan flow. |
+| `backend/requirements-runtime.txt` | Separate server dependencies with no PyTorch, torchvision or Ultralytics. |
+| `backend/Dockerfile` | Export/verify in a build-only stage; install only runtime dependencies and copy ONNX artifacts to the final image; preserve the 480 MiB release gate. |
+| `backend/.dockerignore` | Include the new runtime dependency list, adapter and build scripts. |
+| `backend/tools/export_onnx_models.py` | Export both original checkpoints; check ONNX graphs, preprocessing, output compatibility and mask rules. |
+| `backend/tools/verify_onnx_postprocessing.py` | Focused suppression and classifier input tests that also run without the ML stack. |
+| `backend/tools/verify_inference_memory.py` | Require ONNX, reject heavy runtime imports, match the deployment's detection threshold/hybrid mode, retain the same memory budget with two images and a 300-mask stress check. |
+| `backend/.env.example` | Document the backend selector and automatic checkpoint-path mapping. |
+| `render.yaml` | Set `INFERENCE_BACKEND=onnx`; retain Free compute and 512px/4.2MP limits. |
+| `RENDER_DOCKER_DEPLOYMENT.md` | Explain the measured failure, runtime change, validation limits and this file list. |
 
 ## Optional local container test
 
