@@ -1,152 +1,110 @@
-# Deploy the MetalErosion backend on Render with Docker
+# Free Render deployment: frontend and Docker backend
 
-The backend is FastAPI plus YOLO, OpenCV, and Supabase. Render builds the image
-directly from this Git repository. Docker Desktop is needed only for an optional
-local container test. The frontend stays on Vercel.
+Both services use the `Test-Deploy` branch of `Surciel/MetalErosion`.
 
-## 1. Push the deployment files
+| Component | Render service | Hosting |
+| --- | --- | --- |
+| Frontend | Static Site | Free static hosting |
+| Backend | Docker Web Service | `plan: free` |
 
-Commit and push the changes on the branch you want Render to deploy. The actual
-model files `backend/models/best.pt` and `backend/models/metal_cls.pt` are already
-tracked and must remain available in that branch. No training step is required.
+`render.yaml` defines both services. It contains no paid compute plans, disks,
+databases, background workers, or autoscaling. The existing Supabase project
+continues to provide authentication, scan data, and image storage.
 
-## 2. Create the Render service
+## Deploy from the current branch
 
-Recommended: open https://dashboard.render.com/, choose **New > Blueprint**, and
-connect `https://github.com/Surciel/MetalErosion` using the branch you pushed.
-Use `render.yaml` as the Blueprint path. Supply the three prompted values:
-`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `FRONTEND_ORIGINS`.
-Review the service and compute plan before deploying.
+1. Commit and push `render.yaml` and these documentation changes to `Test-Deploy`.
+2. Open Render > New > Blueprint, connect `Surciel/MetalErosion`, select
+   `Test-Deploy`, and use `render.yaml`.
+3. Provide the backend Supabase URL and service-role key, frontend Supabase URL
+   and anon key, and the exact deployed frontend origin for `FRONTEND_ORIGINS`.
+4. Verify the backend is Free and the frontend is a Static Site before applying.
+5. Once Render assigns URLs, confirm `VITE_API_BASE_URL` is the backend's public
+   HTTPS URL and `FRONTEND_ORIGINS` is the frontend's exact HTTPS origin. Redeploy
+   after changing either variable.
 
-The Blueprint selects the paid `1c-2g` plan (1 CPU, 2 GB RAM). This is a starting
-estimate for two YOLO models, not a measured capacity guarantee. Monitor RAM
-while analyzing an image. The Free plan has 512 MB RAM and may run out of memory;
-it also sleeps after 15 minutes without inbound traffic. Docker does not remove
-those Free-plan limits. No service is created just by editing this repository.
+The Blueprint wires the frontend API URL from the backend's
+`RENDER_EXTERNAL_URL`. If creating services manually, copy the actual assigned
+backend URL into the frontend environment after creation. Do not guess a URL
+from the service name.
 
-Alternatively, choose **New > Web Service**, connect the same repository, and use:
+## Manual service settings
 
-| Render setting | Value |
-| --- | --- |
-| Name | `metalerosion-api` (or your preferred unique name) |
-| Branch | The branch containing these changes |
-| Language/runtime | Docker |
-| Region | Singapore |
-| Root Directory | Leave blank (repository root) |
-| Dockerfile Path | `./backend/Dockerfile` |
-| Docker Build Context Directory | `./backend` |
-| Docker Command | Leave blank; the image contains the startup command |
-| Build Command | No separate command; Render builds the Dockerfile |
-| Health Check Path | `/health` |
-| Compute plan | `1c-2g` recommended starting point; review pricing |
-| Auto Deploy | On Commit |
+| Setting | Backend | Frontend |
+| --- | --- | --- |
+| Branch | `Test-Deploy` | `Test-Deploy` |
+| Runtime | Docker | Static Site |
+| Root Directory | Leave blank | `frontend` |
+| Dockerfile | `./backend/Dockerfile` | N/A |
+| Docker context | `./backend` | N/A |
+| Compute plan | Free | N/A; static hosting is free |
+| Build command | Dockerfile | `npm ci --include=dev && npm run build` |
+| Publish directory | N/A | `dist` |
+| Start / Docker command | Leave blank | N/A |
+| Health check | `/health` | N/A |
+| Node version | N/A | `24.13.0` |
+| `SKIP_INSTALL_DEPS` | N/A | `true` |
 
-Choose either Blueprint or manual Web Service creation for this deployment.
-For an existing service, check its source/runtime settings first rather than
-creating a duplicate unintentionally. If the Dashboard does not offer the runtime
-change you need, create a new Docker service and update the frontend API URL.
+Frontend rewrite: source `/*`, destination `/index.html`, action **Rewrite**.
+This makes direct visits to `/reset-password` work.
 
-## 3. Backend environment variables
+## Credentials and model settings
 
-The Blueprint supplies the fixed values below. For manual service creation, add
-every row in Render's Environment settings. Replace placeholders with your values.
+Backend secret configuration: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
+Frontend configuration: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+Never put the service-role key in the frontend or commit `.env` files.
 
-| Variable | Value |
-| --- | --- |
-| `SUPABASE_URL` | `https://YOUR_PROJECT.supabase.co` |
-| `SUPABASE_SERVICE_ROLE_KEY` | Your existing server-only Supabase service-role key |
-| `FRONTEND_ORIGINS` | `https://YOUR_FRONTEND.vercel.app` |
-| `SUPABASE_STORAGE_BUCKET` | `metal-scans` |
-| `SUPABASE_STORAGE_PRIVATE` | `true` |
-| `SUPABASE_SIGNED_URL_TTL` | `3600` |
-| `MODEL_PATH` | `models/best.pt` |
-| `METAL_CLASSIFIER_PATH` | `models/metal_cls.pt` |
-| `RUST_MEASUREMENT` | `hybrid` |
-| `METAL_CLASSIFIER_THRESHOLD` | `0.4` |
-| `MODEL_CONFIDENCE` | `0.15` |
-| `VALIDATION_CONFIDENCE` | `0.5` |
-| `MIN_SURFACE_AREA_RATIO` | `0.05` |
+The backend also uses the non-secret values in `render.yaml`:
+`SUPABASE_STORAGE_BUCKET=metal-scans`, `SUPABASE_STORAGE_PRIVATE=true`,
+`SUPABASE_SIGNED_URL_TTL=3600`, `MODEL_PATH=models/best.pt`,
+`METAL_CLASSIFIER_PATH=models/metal_cls.pt`, `RUST_MEASUREMENT=hybrid`,
+`METAL_CLASSIFIER_THRESHOLD=0.4`, `MODEL_CONFIDENCE=0.15`,
+`VALIDATION_CONFIDENCE=0.5`, and `MIN_SURFACE_AREA_RATIO=0.05`.
 
-`FRONTEND_ORIGINS` accepts comma-separated exact origins, for example
-`https://YOUR_FRONTEND.vercel.app,http://localhost:5173`. Do not add a trailing
-slash, a URL path, or a wildcard. Use the actual production origin and any specific
-preview origin you need to test.
+Add the Render frontend origin to Supabase Auth's allowed URLs and its
+`/reset-password` path to Redirect URLs. Use the same Supabase project for both
+services. Existing schema and Storage bucket setup must already be complete.
 
-Keep the service-role key on the backend only. Do not commit `.env` or put this key
-in a `VITE_` variable. Render provides `PORT`; the image defaults to `10000` locally.
-The model settings above match the tested configuration in `backend/.env.example`.
+## Verify
 
-This deployment uses the existing Supabase project and `metal-scans` Storage
-bucket. It does not create or migrate tables, change authentication settings, or
-train models. Confirm the schema described in `HISTORY_DATABASE_SETUP.md` and
-`SUPABASE_DATABASE_STORAGE_ISSUES.md`, and the checked-in migrations, are applied
-as appropriate for your existing database. Images and scan history remain in
-Supabase, so this backend does not need a Render persistent disk.
+After both deploys are Live:
 
-## 4. Verify the backend and connect the frontend
+- Open the frontend root and `/reset-password` directly.
+- Open `BACKEND_URL/health`. With the packaged models the response should be
+  `{"status":"ok","segmentation_model_loaded":true,"metal_classifier_loaded":true}`.
+- Sign in, load history, analyze a valid metal image, reload, and confirm the scan
+  and image persist in Supabase.
+- Check logs and RAM while analyzing. The health endpoint confirms initialization;
+  it does not test remote Supabase availability or run inference.
 
-After Render reports the deploy as Live, open:
+## Free-tier behavior and spending
 
-```text
-https://YOUR_BACKEND.onrender.com/health
-```
+The Free backend has 512 MB RAM and 0.1 CPU. It sleeps after 15 minutes without
+inbound traffic and cold starts on the next request. The two YOLO models may
+exceed the memory limit during startup or inference. A successful image build
+alone does not prove that the Free backend can run image analysis. No paid
+upgrade is authorized; report any capacity failure before changing architecture.
 
-Expected response with the bundled models:
+Render includes 750 Free instance hours per workspace per month, shared with
+other Free web services. Static hosting does not consume those instance hours.
+Build minutes and outbound bandwidth also have workspace-wide allowances.
+If a payment method is attached, excess bandwidth or build usage can incur
+charges even when the service's compute plan is Free. The service configuration
+cannot impose a global zero-dollar bandwidth cap. Check Billing and the build
+pipeline spend limit before deploying; no paid resources should be enabled.
 
-```json
-{"status":"ok","segmentation_model_loaded":true,"metal_classifier_loaded":true}
-```
+## Optional local container test
 
-The endpoint becomes available after model initialization. It does not test
-Supabase connectivity, table permissions, Storage access, or inference accuracy.
-Interactive API documentation is at `/docs`; the API does not serve a homepage at `/`.
-
-In Vercel, set `VITE_API_BASE_URL=https://YOUR_BACKEND.onrender.com` for the relevant
-environment and redeploy the frontend. Keep its existing `VITE_SUPABASE_URL` and
-`VITE_SUPABASE_ANON_KEY`. Confirm `FRONTEND_ORIGINS` on Render matches that frontend.
-
-Then log in, load history, analyze one valid metal image, and confirm its image
-and result persist after a reload. This checks Supabase and inference beyond the
-health probe. Check Render's logs and memory metrics during that request.
-
-## Optional local Docker test
-
-From the repository root, with Docker running and a real `backend/.env` configured:
+With Docker running and a real `backend/.env`, from the repository root:
 
 ```powershell
 docker build --platform linux/amd64 -t metalerosion-api ./backend
 docker run --rm --name metalerosion-api -p 10000:10000 --env-file backend/.env metalerosion-api
 ```
 
-In another terminal:
+Then run `Invoke-RestMethod http://localhost:10000/health` in another terminal.
+Render builds from Git directly, so Docker Desktop is not needed for deployment.
 
-```powershell
-Invoke-RestMethod http://localhost:10000/health
-```
-
-To check a different port, run with `-e PORT=8080 -p 8080:8080` instead of the
-default port mapping. Stop the running container with `docker stop metalerosion-api`.
-
-## Changes made
-
-| File | Change |
-| --- | --- |
-| `backend/Dockerfile` | Two-stage Python 3.12 image; CPU PyTorch first; existing requirements; OpenCV system libraries; both model files; non-root user; writable YOLO settings under `/tmp`; build-time ML import/CPU check; one Uvicorn worker; Render's port; graceful termination. |
-| `backend/.dockerignore` | Only allows required code, requirements, Docker files, and the two models into the build context. Excludes credentials, environments, uploads, logs, and unrelated files. |
-| `backend/main.py` | Adds public `GET /health`, lets deployment variables take precedence over `.env`, and names the preferred Supabase credential variable in startup errors. |
-| `backend/.env.example` | Explains exact CORS origins, runtime port, and setting environment variables in Render. |
-| `render.yaml` | Backend-only Docker Blueprint, Singapore region, paid `1c-2g` plan, health path, automatic deploys, manual secrets/origin, and tested model settings. |
-| `README.md` | Replaces placeholder text with a project description and deployment guide link; converts the existing UTF-16 file to UTF-8. |
-| `VERCEL_URL_GUIDE.md` | Replaces the native Python deployment instructions with Docker settings and links here. |
-| `RENDER_DOCKER_DEPLOYMENT.md` | This guide, configuration tables, verification steps, and change list. |
-
-The existing requirements and model weights are unchanged. Dependencies are not
-fully version-locked, so a later clean image build may resolve newer packages.
-
-## References
-
-- Docker on Render: https://render.com/docs/docker
-- Blueprint settings: https://render.com/docs/blueprint-spec
-- Health checks: https://render.com/docs/health-checks
-- Compute plans: https://render.com/docs/compute-plans
-- Free-plan limits: https://render.com/docs/free
+References: https://render.com/docs/free, https://render.com/docs/static-sites,
+https://render.com/docs/docker, https://render.com/docs/blueprint-spec,
+https://render.com/docs/build-pipeline.

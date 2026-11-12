@@ -24,12 +24,12 @@ VITE_SUPABASE_ANON_KEY=<supabase-publishable-anon-key>
 The frontend uses Supabase Auth for email/password signup, email confirmation, and password recovery. Configure these redirect URLs in Supabase Authentication > URL Configuration:
 
 ```text
-https://<vercel-project>.vercel.app/reset-password
+https://<render-frontend>.onrender.com/reset-password
 http://localhost:8443/reset-password
 http://localhost:5173/reset-password
 ```
 
-Deploy the frontend from the `frontend` directory with `npm run build`. See `VERCEL_URL_GUIDE.md` in the repository root for the Vercel, Render, and Supabase URL checklist.
+Deploy the frontend from the `frontend` directory with `npm run build`. For free Render hosting from `Test-Deploy`, see `RENDER_DOCKER_DEPLOYMENT.md` in the repository root. The root Blueprint configures a static site with an SPA rewrite and the backend public API URL.
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
