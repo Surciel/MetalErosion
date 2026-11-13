@@ -5,16 +5,17 @@ import BoundingBoxImage from "@/components/BoundingBoxImage"
 import {
   AstmGradeTooltip,
   DistributionTooltip,
-  DssTooltip,
   PriorityTooltip,
   RustPercentTooltip,
 } from "@/components/ClassificationTooltips"
 import QualityNotice from "@/components/QualityNotice"
+import AssetCategoryLine from "@/components/AssetCategoryLine"
+import DecisionSupportPanel from "@/components/DecisionSupportPanel"
 import ProjectionChart from "@/components/charts/ProjectionChart"
 import AstmScale from "@/components/charts/AstmScale"
 import { severityColor } from "@/utils/severity"
 import { distributionName } from "@/utils/classificationInfo"
-import type { ScanResult, View } from "@/types"
+import type { AssetCategory, ScanResult, View } from "@/types"
 
 export default function HistoryDetailPage({
   username,
@@ -24,6 +25,8 @@ export default function HistoryDetailPage({
   onNavigate,
   onDelete,
   onEdit,
+  categories,
+  onChangeCategory,
 }: {
   username: string
   scan: ScanResult
@@ -32,6 +35,8 @@ export default function HistoryDetailPage({
   onNavigate: (v: View) => void
   onDelete: (scanId: string) => Promise<void>
   onEdit: (scanId: string, title: string) => Promise<void>
+  categories: AssetCategory[]
+  onChangeCategory: (scanId: string, assetCategory: string) => Promise<void>
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [displayed, setDisplayed] = useState<ScanResult>(scan)
@@ -49,6 +54,11 @@ export default function HistoryDetailPage({
     setTitleValue(scan.title || scan.imageName)
     setEditingTitle(false)
   }, [scan])
+
+  // After an edit (title or category) the list holds the recalculated scan; show it.
+  useEffect(() => {
+    setDisplayed((current) => (history ?? []).find((item) => item.id === current.id) ?? current)
+  }, [history])
 
   const handleDelete = async () => {
     if (!window.confirm(`Delete the scan history for ${displayed.imageName}?`)) {
@@ -288,6 +298,11 @@ export default function HistoryDetailPage({
                     Distribution: {distributionName(displayed.distributionType)}
                     <DistributionTooltip type={displayed.distributionType} align="right" />
                   </p>
+                  <AssetCategoryLine
+                    scan={displayed}
+                    categories={categories}
+                    onChange={(assetCategory) => onChangeCategory(displayed.id, assetCategory)}
+                  />
                   <span
                     className="text-xs px-2 py-0.5 rounded-full font-medium self-start"
                     style={{ background: color + "22", color }}
@@ -361,18 +376,7 @@ export default function HistoryDetailPage({
               </div>
 
               {/* DSS */}
-              <div
-                className="rounded-2xl p-6 flex flex-col gap-3"
-                style={{ background: "rgba(255,255,255,0.05)" }}
-              >
-                <p className="text-xs text-white/40 font-mono uppercase tracking-wider">
-                  DECISION SUPPORT SYSTEM
-                  <DssTooltip />
-                </p>
-                <p className="text-sm text-white/80 leading-relaxed">
-                  {displayed.dss}
-                </p>
-              </div>
+              <DecisionSupportPanel scan={displayed} color={color} />
 
               {/* Back button */}
               <div className="flex flex-col items-center gap-3 pt-2">

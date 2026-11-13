@@ -2,6 +2,7 @@ import ChartCard from "@/components/charts/ChartCard"
 import CountBarChart, { type CountDatum } from "@/components/charts/CountBarChart"
 import StatTile, { RangeFilter } from "@/components/charts/StatTile"
 import {
+  categoryCounts,
   distributionCounts,
   gradeCounts,
   priorityCounts,
@@ -69,6 +70,7 @@ export default function AdminAnalyticsSection({
   const byPriority = priorityCounts(analytics?.byPriority ?? {})
   const byDistribution = distributionCounts(analytics?.byDistribution ?? {})
   const byLighting = ranked(analytics?.byLighting ?? {}, LIGHTING_LABELS)
+  const byCategory = categoryCounts(analytics?.byCategory ?? {})
   const rejections = ranked(analytics?.rejections ?? {}, REJECTION_LABELS)
 
   const totalScans = analytics?.totalScans ?? 0
@@ -164,6 +166,16 @@ export default function AdminAnalyticsSection({
         </ChartCard>
 
         <ChartCard
+          title="Scans by asset category"
+          subtitle="The kind of object chosen for each scan. It sets the baseline corrosion rate."
+          table={toTable("Asset category", "Scans", byCategory)}
+          empty={emptyScans}
+          dimmed={dimmed}
+        >
+          <CountBarChart data={byCategory} direction="bars" unit="scans" />
+        </ChartCard>
+
+        <ChartCard
           title="Rejected scans by reason"
           subtitle="Uploads that failed a validation check, by the check that failed."
           table={toTable("Reason", "Rejections", rejections)}
@@ -177,7 +189,6 @@ export default function AdminAnalyticsSection({
                   : undefined
           }
           dimmed={dimmed}
-          className="lg:col-span-2"
         >
           <CountBarChart data={rejections} direction="bars" unit="rejections" />
         </ChartCard>

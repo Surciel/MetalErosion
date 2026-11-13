@@ -18,8 +18,11 @@ export const DISTRIBUTION_INFO =
 export const PRIORITY_INFO =
   "Maintenance urgency from the predictive engine: a linear-regression corrosion rate projects how many days remain until the surface reaches 33% rust (ASTM grade 1). The rate is scaled by how widely the rust is spread: rust found across more of the surface is projected to grow faster (×0.85 when concentrated, up to ×1.30 when it covers the whole surface)."
 
+export const CATEGORY_INFO =
+  "The kind of object, chosen when the scan was taken. It sets the baseline corrosion rate used to predict the days to critical. The rates are the system's starting assumptions, ordered using published coating and corrosion data; they are not measured for this object. If the category is wrong, change it from the scan's history page and the prediction is recalculated."
+
 export const DSS_INFO =
-  "Decision Support System: the recommended maintenance action for this ASTM grade."
+  "Decision Support System: a rule-based maintenance answer built from this scan. The rust % and ASTM grade pick the action, the distribution type decides between spot repair and a full recoat, the asset category sets the wording of the steps, and the projected rate sets the timing. The thresholds come from ASTM D610, ISO 4628-3 and SSPC-PA Guide 5; the sources are listed at the bottom of the panel."
 
 export const LIGHTING_INFO =
   "Brightness check of the photo. Very dark or blown-out photos are rejected; dim or glare-heavy photos are analyzed but may be less accurate."

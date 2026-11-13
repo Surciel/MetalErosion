@@ -3,17 +3,21 @@ import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import PageGrid from "@/components/PageGrid"
 import ScanPreparationModal from "@/components/ScanPreparationModal"
-import type { View } from "@/types"
+import type { AssetCategory, View } from "@/types"
 
 export default function HomePage({
   username,
   isAdmin = false,
   onUpload,
+  categories,
+  categoriesError,
   onNavigate,
 }: {
   username: string
   isAdmin?: boolean
-  onUpload: (file: File, url: string, title: string) => void
+  onUpload: (file: File, url: string, title: string, assetCategory: string) => void
+  categories: AssetCategory[]
+  categoriesError?: string
   onNavigate: (v: View) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -139,16 +143,18 @@ export default function HomePage({
         <ScanPreparationModal
           file={pendingFile}
           sourceUrl={pendingUrl}
+          categories={categories}
+          categoriesError={categoriesError}
           onCancel={() => {
             URL.revokeObjectURL(pendingUrl)
             setPendingFile(null)
             setPendingUrl("")
           }}
-          onConfirm={(scanFile, previewUrl, title) => {
+          onConfirm={(scanFile, previewUrl, title, assetCategory) => {
             URL.revokeObjectURL(pendingUrl)
             setPendingFile(null)
             setPendingUrl("")
-            onUpload(scanFile, previewUrl, title)
+            onUpload(scanFile, previewUrl, title, assetCategory)
           }}
         />
       )}

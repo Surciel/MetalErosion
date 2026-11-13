@@ -489,6 +489,170 @@ Charts are in three places. Each chart card has a **Show table** button with the
 - [ ] Side menu → **Analytics**: tiles and four charts; changing the period changes all of them; **Show table** works.
 - [ ] Admin page: the analytics section loads, and the period filter updates every chart.
 
+### Review fixes (final check)
+A review of the whole system after the feature work. Four problems were fixed; none changes a measurement, a grade or a recommendation.
+
+| Problem | Effect | Fix |
+|---|---|---|
+| The image link saved with a scan is a signed link that expires after one hour. | Saved scans lost their photo: the three oldest real scans returned an error. | The history now requests fresh links for all scans in one call. Old scans work again. No migration. |
+| The scan endpoint ran the AI models on the server's main loop. | While one scan was being analysed, every other request (login, history, admin) waited. | The scan runs in a worker thread. Scans take turns at the model; a light request during two scans answered in 0.01 s. |
+| Deleting a scan removed the record but left the photo in storage. | Deleted photos stayed in the bucket. | The photo is removed too, only from the owner's own folder. |
+| An oversized upload was read fully before the size check. | A very large file could use the server's memory. | Reading stops just past the 15 MB limit. |
+
+Smaller: the admin metrics no longer run the same account count twice, and history photos load as they scroll into view.
+
+| File | Change |
+|---|---|
+| [`backend/main.py`](backend/main.py) | `_storage_path()`, `_refresh_image_urls()`, the scan endpoint as a worker-thread function with an inference lock, photo removal on delete, bounded upload read. |
+| [`frontend/src/components/BoundingBoxImage.tsx`](frontend/src/components/BoundingBoxImage.tsx) | Lazy image loading. |
+
+**Check by hand**
+- [ ] Open the history: scans older than an hour show their photo.
+- [ ] Delete a test scan: it disappears, and its file is gone from the `metal-scans` bucket in Supabase.
+- [ ] Start a scan, and while it is calculating open the app in a second tab: the second tab loads without waiting.
+
+**Found but not changed (your decision)**
+- **Deployment.** Everything since the asset category work is uncommitted, so the hosted version does not have it. Before the defense: commit and push, run migrations 003 and 004 in Supabase, and set `RUST_MEASUREMENT=hybrid`, `METAL_CLASSIFIER_THRESHOLD=0.4` and `MODEL_CONFIDENCE=0.15` on Render. Without those three settings the hosted backend runs with the code defaults, and the tested results do not apply.
+- **`backend/requirements.txt` has no version numbers.** A fresh deploy installs whatever is newest, which can break without any code change. Pin the versions after the defense, not before.
+- **The frontend is one 940 kB file (263 kB compressed)** because of the chart library. It can be split so the landing page loads faster. Not needed for a demo.
+- **Type errors** remain in `AuthModal.tsx` and `BoundingBoxImage.tsx`, and `tsconfig.json` has a setting the installed TypeScript rejects. The build does not type-check, so nothing breaks.
+- **Unused code:** the crop-and-rescan pass (`RESCAN_METAL_CROP`, off) and the `/predict-maintenance` endpoint (not called by the frontend).
+- **Older documents** in the repository root (the handoff files, `DFD_CONTEXT.md`, the stub `README.md`) describe the system before these changes.
+
+### Decision support answers (maintenance recommendation)
+Before this change the Decision Support System showed one fixed sentence per ASTM grade. It cited nothing, ignored the asset category and the distribution type, and gave the same "abrasive blasting and two-coat epoxy" to a pair of scissors and a roof.
+
+**Now** the panel is a rule-based answer built from the scan's own values. It is not AI-written text: the same scan always gives the same answer, and every line traces to a rule in [`backend/decision_support.py`](backend/decision_support.py).
+
+The panel answers:
+
+| Question | Where it comes from |
+|---|---|
+| What should I do? | Rust %, ASTM grade and distribution type pick one of six action levels. |
+| How? | 3 to 4 steps worded for the asset category. |
+| By when? | Days until the existing projection crosses into the next level; "scan again" is half of that. |
+| Why? | The scan's values and the rule that fired. |
+| What if it is left? | The next level and when the projection reaches it. |
+| How sure is this? | Limits of a photo reading, photo quality flags, tested accuracy. |
+| Based on what? | Source list with links, collapsed at the bottom. |
+
+**The decision rules**
+
+| Level | Trigger | Basis |
+|---|---|---|
+| 1. No repair, routine care | Up to 0.03% (grade 10 to 9) | ASTM D610: no rust or minute traces. |
+| 2. Spot touch-up | Over 0.03% to 1% (grade 8 to 6) | Below ISO 4628-3 Ri 3 (1% rusted area), the point treated as first major maintenance under ISO 12944. |
+| 3. Spot repair | Over 1% to 10% (grade 5 to 4), **Spot** | Ri 3 passed, so maintenance is due; under 10%, so spot repair is still economical (SSPC-PA Guide 5). |
+| 4. Spot repair and full recoat | Over 1% to 10%, **General, Pinpoint or Hybrid** | Same band, but the rust is scattered. **Project rule.** |
+| 5. Full removal and recoat | Over 10% to under 33% (grade 3 to 2) | SSPC-PA Guide 5: at 10 to 15% deterioration, removal and replacement is preferred. |
+| 6. Assess for replacement | 33% and over (grade 1 to 0) | The system's critical threshold. A photo cannot show metal loss, so a physical check is required. |
+
+This is the first place the distribution type changes the recommended **action**, not only the slope.
+
+**Example: the roof photo (6.87% rust, rating 4-S)**
+
+| Category | Answer | Act within | Scan again in |
+|---|---|---|---|
+| Hardware | Repair the rusted areas | 70 days | 35 days |
+| Metal Walls | Repair the rusted areas | 527 days (about 17 months) | 263 days (about 9 months) |
+
+The steps differ too: Hardware gets wire brush, rust-remover soak and oil; Metal Walls gets fastener replacement, zinc-rich primer and roofing paint.
+
+**How well each source is verified (read this before citing them)**
+
+| Source | Used for | Status |
+|---|---|---|
+| ASTM D610 / SSPC-VIS 2 | Grade bands, distribution types | Already used by the system. |
+| SSPC-PA Guide 5, as cited by S. Sondag (MnDOT), JPCL, January 2016 | 10 to 15% threshold for full removal | The sentence was read on the article page. **Guide 5 itself is paywalled and was not read.** Cite it as "SSPC-PA Guide 5, as cited in Sondag (2016)". |
+| ISO 4628-3 | Ri 3 = 1% rusted area | Table values confirmed from the standard's sample pages. |
+| ISO 12944 | Ri 3 as the point of first major maintenance | **From secondary summaries only.** Someone should check the standard's wording before the paper quotes it. |
+| SSPC-SP 2, SP 3, SP 6 and ISO 8501-1 equivalents | Cleaning grade named in the steps | From the Sherwin-Williams surface preparation guide. |
+
+**What is a project rule, not a standard**
+- The Spot against scattered split (level 3 against 4). ASTM D610 defines the patterns; choosing the action from them is ours. Coating-industry articles say the same, but none could be opened and checked, so none is cited.
+- "Scan again" = half the time to the next level, kept between 30 and 365 days.
+- The steps per asset category are general good practice, not from a standard.
+- The timing inherits the assumed category rates, so it is only as good as they are. The panel says this on every answer.
+- The 33% critical level, as before.
+
+**Notes for the paper**
+- These standards are written for painted structural steel (bridges, tanks). Applying their thresholds to tools, vehicles and household items is an adaptation; say so.
+- The tested accuracy figures shown in the panel (73% exact, 88% within one grade) are constants at the top of `decision_support.py`. Update them if the models or settings change.
+- The old one-sentence protocols in `ASTM_D610_SCALE` are no longer shown. Update any table in the paper that lists them.
+
+| File | Change |
+|---|---|
+| [`backend/decision_support.py`](backend/decision_support.py) | **New.** The six levels, steps per category, sources and `build_decision_support()`. |
+| [`backend/main.py`](backend/main.py) | The scan response gains `decision_support`. `recommendation` is still a string: the headline plus the timing sentence. |
+| [`backend/predictive_engine.py`](backend/predictive_engine.py) | Returns the unrounded slope for the timing. No calculation changed. |
+| [`frontend/src/components/DecisionSupportPanel.tsx`](frontend/src/components/DecisionSupportPanel.tsx) | **New.** The panel on the results and history detail pages. |
+| [`frontend/src/services/api.ts`](frontend/src/services/api.ts), [`types/index.ts`](frontend/src/types/index.ts), [`utils/classificationInfo.ts`](frontend/src/utils/classificationInfo.ts) | New `DecisionSupport` type, mapping and tooltip text. |
+
+No migration is needed: the answer is rebuilt from stored values, so old scans get it too.
+
+**Check by hand**
+- [ ] Scan a rusty photo: the panel shows a headline, "Act within" and "Scan again in" chips, numbered steps, reasons, "If this is left", limits and a "Sources" list that opens.
+- [ ] Open an old scan from history: it has the new panel too.
+- [ ] Change a saved scan's category: the steps and the timing change.
+- [ ] A clean item says "No repair needed" with no "Act within" chip.
+- [ ] A heavily rusted item (33% or more) says "Critical: have it assessed for replacement" with "Act now".
+- [ ] A dim or blurry photo shows the "Confidence reduced by photo quality" chip.
+- [ ] The severity pop-up and history search still work (they use the one-line form).
+- [ ] Open each source link.
+
+### Asset category picker
+Before this, the four asset categories existed only inside the prediction code and every scan was analysed as Hardware. Now the user chooses the category for each scan.
+
+**How it works**
+- **Chosen on the upload screen.** Four options, each with a description and examples. Nothing is preselected, and **Start scan** stays disabled until one is chosen.
+- **One definition.** [`backend/asset_categories.py`](backend/asset_categories.py) holds each category's name, description, rate, basis and evidence. The prediction code, the upload validation and the picker all read from it (`GET /asset-categories`), so the options shown and the rates used cannot drift apart.
+- **Saved with the scan** (`scans.asset_category`, migration 004), so History shows the same prediction.
+- **Shown on the result** with its rate, and a tooltip stating what the rate is based on.
+- **Correctable.** On the history detail page, **Change** saves a new category and the backend recalculates the days to critical and priority.
+- **Charts.** Scans by asset category on the Analytics page and the admin dashboard.
+
+**Safeguards**
+| Risk | What prevents it |
+|---|---|
+| A silent default | The backend has no default; a scan without a category is refused (400 `category_required`). |
+| A typo or made-up category | Only the four defined names are accepted, exactly as written. |
+| Picker and backend disagreeing | The picker's options are loaded from the backend. If they can't be loaded, scanning is blocked with a message. |
+| Choosing the wrong category | Descriptions and examples in the picker; the choice and its rate are shown before scanning and on the result; it can be changed afterwards. |
+| Old scans | Scans saved before this have no category. They keep the Hardware rate they were analysed with and show "Not recorded (Hardware rate used)". |
+
+**What the published evidence supports** (checked 2026-11-13)
+- **No source gives a rust-area growth rate ("% of surface per day") by type of object.** The four rates are therefore project assumptions, and the system says so in the tooltip.
+- **ISO 9223** gives corrosion as thickness lost per year by environment, not area by object. Zinc loses 0.7 to 2.1 µm per year in an urban C3 atmosphere and 0.1 to 0.7 in C2.
+- **Zinc coating life:** the galvanizing industry defines "time to first maintenance" as the time until 5% of the surface shows red rust, proportional to coating thickness.
+- **Coating thickness:** galvanized building sheet (G90 / Z275) carries about 21 µm of zinc per side; exposed automotive panels about 7 to 10 µm.
+- These facts support the **order** of the categories and the roughly 3× gap between Vehicles and Metal Walls. They do not validate the absolute rates. Sources and links are in `backend/asset_categories.py`.
+
+| Category | Rate (% per day) | Rust-free to 33% | What the evidence says about its place |
+|---|---|---|---|
+| Hardware | 0.045 | about 2 years | Commonly bare or thinly plated, so set fastest. Coating thickness not verified against a standard. |
+| Vehicles | 0.018 | about 5 years | 7 to 10 µm of zinc per side, a third to a half of building sheet. |
+| Household | 0.009 | about 10 years | Sheltered atmospheres are less corrosive (ISO 9223 C2 against C3). Its place above Metal Walls is an assumption. |
+| Metal Walls | 0.006 | about 15 years | About 21 µm of zinc per side; 10 to 30 years to 5% rust in a C3 atmosphere. |
+
+**For the paper**
+- Chapter 3's table should say the category is **chosen by the user**, and that the rates are baseline assumptions ordered using the sources above.
+- The row "Unmapped category, 0.09 fallback" no longer describes the system: an unknown category is refused.
+
+| File | Change |
+|---|---|
+| [`backend/asset_categories.py`](backend/asset_categories.py) | **New.** The categories, rates, basis, evidence and sources. |
+| [`backend/predictive_engine.py`](backend/predictive_engine.py) | Reads the rates from that file instead of defining them. |
+| [`backend/main.py`](backend/main.py) | Category required and validated; saved and returned; `GET /asset-categories`; `PATCH /history/{id}` can change it and recalculates; analytics by category. |
+| [`backend/migrations/004_asset_category.sql`](backend/migrations/004_asset_category.sql) | **New.** Adds `scans.asset_category`. |
+| [`frontend/src/components/ScanPreparationModal.tsx`](frontend/src/components/ScanPreparationModal.tsx) | The picker. |
+| [`frontend/src/components/AssetCategoryLine.tsx`](frontend/src/components/AssetCategoryLine.tsx) | **New.** Shows the category and rate; lets the owner change it. |
+
+**Check by hand** (run migration 004 first)
+- [ ] The upload pop-up lists four categories; **Start scan** is disabled until one is picked.
+- [ ] The same photo scanned as Hardware and as Metal Walls gives very different days to critical.
+- [ ] The result shows the category and its rate.
+- [ ] On the history detail page, **Change** the category: the days to critical and priority update.
+
 ### Metal classifier and hybrid rust measurement (hierarchical classification)
 This is the colleague's backend update, merged into our `main.py` (not overwritten, so the spread slope, validations and analytics are kept). It **supersedes the threshold table in Step 2 above**: the tested configuration uses one detection confidence, 0.15, for metal and rust.
 

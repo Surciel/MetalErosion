@@ -7,16 +7,17 @@ import BoundingBoxImage from "@/components/BoundingBoxImage"
 import {
   AstmGradeTooltip,
   DistributionTooltip,
-  DssTooltip,
   PriorityTooltip,
   RustPercentTooltip,
 } from "@/components/ClassificationTooltips"
 import QualityNotice from "@/components/QualityNotice"
+import AssetCategoryLine from "@/components/AssetCategoryLine"
+import DecisionSupportPanel from "@/components/DecisionSupportPanel"
 import ProjectionChart from "@/components/charts/ProjectionChart"
 import AstmScale from "@/components/charts/AstmScale"
 import { severityColor } from "@/utils/severity"
 import { distributionName } from "@/utils/classificationInfo"
-import type { ScanResult, View } from "@/types"
+import type { AssetCategory, ScanResult, View } from "@/types"
 
 type SeverityBadgeProps = {
   label: string
@@ -41,13 +42,17 @@ export default function ResultsPage({
   onNavigate,
   onClose,
   onUpload,
+  categories,
+  categoriesError,
 }: {
   username: string
   result: ScanResult
   sessionScans: ScanResult[]
   onNavigate: (v: View) => void
   onClose: () => void
-  onUpload: (file: File, url: string, title: string) => void
+  onUpload: (file: File, url: string, title: string, assetCategory: string) => void
+  categories: AssetCategory[]
+  categoriesError?: string
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [displayed, setDisplayed] = useState<ScanResult>(result)
@@ -291,6 +296,7 @@ export default function ResultsPage({
                   Distribution: {distributionName(displayed.distributionType)}
                   <DistributionTooltip type={displayed.distributionType} align="right" />
                 </p>
+                <AssetCategoryLine scan={displayed} categories={categories} />
                 <SeverityBadge
                   label={displayed.classificationLabel}
                   color={color}
@@ -436,20 +442,8 @@ export default function ResultsPage({
             </div>
 
             {/* DSS — full width */}
-            <div
-              className="rounded-2xl p-6 flex flex-col gap-3"
-              style={{
-                gridColumn: "1 / -1",
-                background: "rgba(255,255,255,0.05)",
-              }}
-            >
-              <p className="text-xs text-white/40 font-mono uppercase tracking-wider">
-                DECISION SUPPORT SYSTEM
-                <DssTooltip />
-              </p>
-              <p className="text-sm text-white/80 leading-relaxed">
-                {displayed.dss}
-              </p>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <DecisionSupportPanel scan={displayed} color={color} />
             </div>
 
             {/* Intentional navigation */}
@@ -498,16 +492,18 @@ export default function ResultsPage({
         <ScanPreparationModal
           file={pendingFile}
           sourceUrl={pendingUrl}
+          categories={categories}
+          categoriesError={categoriesError}
           onCancel={() => {
             URL.revokeObjectURL(pendingUrl)
             setPendingFile(null)
             setPendingUrl("")
           }}
-          onConfirm={(scanFile, previewUrl, title) => {
+          onConfirm={(scanFile, previewUrl, title, assetCategory) => {
             URL.revokeObjectURL(pendingUrl)
             setPendingFile(null)
             setPendingUrl("")
-            onUpload(scanFile, previewUrl, title)
+            onUpload(scanFile, previewUrl, title, assetCategory)
           }}
         />
       )}

@@ -5,6 +5,8 @@ import type {
   AnalyzeCorrosionOptions,
   AnalysisResponse,
   AnalysisErrorKind,
+  AssetCategory,
+  DecisionSupport,
   DistributionType,
   LightingStatus,
   MetricRange,
@@ -128,6 +130,45 @@ async function requestJson<T>(
   return (await response.json()) as T
 }
 
+/** Reads the backend's decision support answer; null if it is missing or malformed. */
+function toDecisionSupport(value: unknown): DecisionSupport | null {
+  if (typeof value !== "object" || value === null) return null
+  const record = value as Record<string, unknown>
+  const text = (entry: unknown): string => (typeof entry === "string" ? entry : "")
+  const texts = (entry: unknown): string[] =>
+    Array.isArray(entry) ? entry.filter((item): item is string => typeof item === "string") : []
+  const days = (entry: unknown): number | null =>
+    typeof entry === "number" && Number.isFinite(entry) ? entry : null
+
+  const headline = text(record.headline)
+  if (!headline || typeof record.level !== "number") return null
+
+  const sources = Array.isArray(record.sources)
+    ? record.sources.flatMap((item) => {
+        if (typeof item !== "object" || item === null) return []
+        const source = item as Record<string, unknown>
+        const label = text(source.label)
+        const url = text(source.url)
+        // Only plain web links are rendered as links.
+        return label ? [{ label, url: /^https?:\/\//.test(url) ? url : "" }] : []
+      })
+    : []
+
+  return {
+    level: record.level,
+    headline,
+    summary: text(record.summary),
+    steps: texts(record.steps),
+    actWithinDays: days(record.act_within_days),
+    rescanInDays: days(record.rescan_in_days),
+    reasons: texts(record.reasons),
+    ifDelayed: text(record.if_delayed),
+    limits: texts(record.limits),
+    confidence: record.confidence === "reduced" ? "reduced" : "normal",
+    sources,
+  }
+}
+
 function mapAnalysisResponse(
   data: AnalysisResponse,
   previewImageUrl = "",
@@ -154,12 +195,15 @@ function mapAnalysisResponse(
     spreadCoverage,
     spreadFactor,
     regressionSlope: numberOrNull(data.regression_slope),
+    assetCategory: typeof data.asset_category === "string" ? data.asset_category : null,
+    categoryRate: numberOrNull(data.category_rate),
     lightingStatus: toLightingStatus(data.lighting_status),
     qualityWarnings: toQualityWarnings(data.quality_warnings),
     priorityLevel: data.priority_level,
     classification: `ASTM ${astmRating}`,
     classificationLabel: data.priority_level,
     dss: data.recommendation,
+    decisionSupport: toDecisionSupport(data.decision_support),
     rustExplanation: rustExplanation(data.rust_percentage, distributionType),
     classificationExplanation: classificationExplanation(
       data.astm_grade,
@@ -212,6 +256,7 @@ export async function analyzeCorrosion(
   const formData = new FormData()
   formData.append("file", file)
   if (options.title) formData.append("title", options.title)
+  if (options.assetCategory) formData.append("asset_category", options.assetCategory)
 
   const headers: HeadersInit = {}
   if (options.accessToken) {
@@ -354,7 +399,7 @@ export async function deleteScanHistory(
 export async function updateScanHistory(
   accessToken: string,
   scanId: string,
-  title: string,
+  changes: { title?: string; assetCategory?: string },
 ): Promise<ScanResult> {
   const response = await fetch(
     `${API_BASE_URL}/history/${encodeURIComponent(scanId)}`,
@@ -364,7 +409,7 @@ export async function updateScanHistory(
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title: changes.title, asset_category: changes.assetCategory }),
     },
   )
 
@@ -454,6 +499,32 @@ export async function updateAdminAccount(
   return mapAdminAccount(account)
 }
 
+type AssetCategoryResponse = {
+  name: string
+  description: string
+  examples: string
+  rate_per_day: number
+  years_new_to_critical: number
+  basis: string
+  evidence: string
+  sources: string[]
+}
+
+/** The asset categories, their rates and the evidence behind them, from the backend. */
+export async function getAssetCategories(accessToken: string): Promise<AssetCategory[]> {
+  const categories = await requestJson<AssetCategoryResponse[]>("/asset-categories", accessToken)
+  return categories.map((category) => ({
+    name: category.name,
+    description: category.description,
+    examples: category.examples,
+    ratePerDay: category.rate_per_day,
+    yearsNewToCritical: category.years_new_to_critical,
+    basis: category.basis,
+    evidence: category.evidence,
+    sources: category.sources ?? [],
+  }))
+}
+
 type AdminAnalyticsResponse = {
   days: number
   total_scans: number
@@ -463,6 +534,7 @@ type AdminAnalyticsResponse = {
   by_priority: Record<string, number>
   by_distribution: Record<string, number>
   by_lighting: Record<string, number>
+  by_category: Record<string, number>
   rejections: Record<string, number>
   rejections_available: boolean
 }
@@ -486,6 +558,7 @@ export async function getAdminAnalytics(
     byPriority: data.by_priority ?? {},
     byDistribution: data.by_distribution ?? {},
     byLighting: data.by_lighting ?? {},
+    byCategory: data.by_category ?? {},
     rejections: data.rejections ?? {},
     rejectionsAvailable: data.rejections_available ?? false,
   }

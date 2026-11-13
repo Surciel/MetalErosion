@@ -44,6 +44,13 @@ export function distributionCounts(counts: Record<string, number>): CountDatum[]
   ]
 }
 
+/** Scans per asset category, largest first. Scans saved before categories existed are grouped. */
+export function categoryCounts(counts: Record<string, number>): CountDatum[] {
+  return Object.entries(counts)
+    .map(([name, value]) => ({ label: name === "not_recorded" ? "Not recorded" : name, value }))
+    .sort((left, right) => right.value - left.value)
+}
+
 function tally<K extends string | number>(keys: K[]): Record<K, number> {
   const counts = {} as Record<K, number>
   for (const key of keys) counts[key] = (counts[key] ?? 0) + 1
@@ -57,6 +64,7 @@ export type ScanSummary = {
   byGrade: CountDatum[]
   byPriority: CountDatum[]
   byDistribution: CountDatum[]
+  byCategory: CountDatum[]
 }
 
 export function summarizeScans(scans: ScanResult[]): ScanSummary {
@@ -69,6 +77,7 @@ export function summarizeScans(scans: ScanResult[]): ScanSummary {
     byGrade: gradeCounts(tally(scans.map((scan) => scan.astmGrade))),
     byPriority: priorityCounts(tally(scans.map((scan) => scan.priorityLevel))),
     byDistribution: distributionCounts(tally(scans.map((scan) => scan.distributionType ?? "none"))),
+    byCategory: categoryCounts(tally(scans.map((scan) => scan.assetCategory ?? "not_recorded"))),
   }
 }
 

@@ -16,6 +16,7 @@ import {
   getAdminAnalytics,
   getAdminMetrics,
   getAdminRecoveryRequests,
+  getAssetCategories,
   getCurrentAccount,
   getScanHistory,
   deleteScanHistory,
@@ -29,6 +30,7 @@ import type {
   Account,
   AdminAnalytics,
   AdminMetrics,
+  AssetCategory,
   LoginCredentials,
   MetricRange,
   RecoveryRequest,
@@ -66,6 +68,10 @@ export default function App() {
   const [uploadedImageUrl, setUploadedImageUrl] = useState("")
   const [uploadedImageName, setUploadedImageName] = useState("")
   const [scanTitle, setScanTitle] = useState("")
+  const [scanCategory, setScanCategory] = useState("")
+  // The picker's options come from the backend, so they always match the rates it uses.
+  const [assetCategories, setAssetCategories] = useState<AssetCategory[]>([])
+  const [categoriesError, setCategoriesError] = useState("")
   const [currentResult, setCurrentResult] = useState<ScanResult | null>(null)
   const [sessionScans, setSessionScans] = useState<ScanResult[]>([])
   const [history, setHistory] = useState<ScanResult[]>([])
@@ -108,6 +114,17 @@ export default function App() {
       return await getCurrentAccount(accessToken)
     } catch {
       return accountFromUser(user)
+    }
+  }
+
+  const loadCategories = async (accessToken: string) => {
+    try {
+      setAssetCategories(await getAssetCategories(accessToken))
+      setCategoriesError("")
+    } catch {
+      setCategoriesError(
+        "The asset categories could not be loaded, so scans cannot start. Check that the backend is running and reload the page.",
+      )
     }
   }
 
@@ -200,6 +217,7 @@ export default function App() {
         const account = await accountForSession(session.user, session.access_token)
         setActiveAccount(account)
         void loadHistory(session.access_token)
+        void loadCategories(session.access_token)
         if (account.role === "admin") {
           void loadAdminData(session.access_token, metricRange)
         }
@@ -224,6 +242,7 @@ export default function App() {
             const account = await accountForSession(session.user, session.access_token)
             setActiveAccount(account)
             void loadHistory(session.access_token)
+            void loadCategories(session.access_token)
             if (account.role === "admin") {
               void loadAdminData(session.access_token, metricRange)
             }
@@ -355,11 +374,12 @@ export default function App() {
     setView("landing")
   }
 
-  const handleUpload = (file: File, url: string, title: string) => {
+  const handleUpload = (file: File, url: string, title: string, assetCategory: string) => {
     setUploadedFile(file)
     setUploadedImageUrl(url)
     setUploadedImageName(file.name)
     setScanTitle(title)
+    setScanCategory(assetCategory)
     setView("calculating")
   }
 
@@ -413,7 +433,10 @@ export default function App() {
     }
   }
 
-  const handleUpdateHistoryScan = async (scanId: string, title: string) => {
+  const updateScan = async (
+    scanId: string,
+    changes: { title?: string; assetCategory?: string },
+  ) => {
     const {
       data: { session },
     } = await supabase.auth.getSession()
@@ -426,7 +449,7 @@ export default function App() {
       const updatedScan = await updateScanHistory(
         session.access_token,
         scanId,
-        title,
+        changes,
       )
       const replaceScan = (scan: ScanResult) =>
         scan.id === updatedScan.id ? updatedScan : scan
@@ -440,9 +463,15 @@ export default function App() {
       }
       throw cause instanceof Error
         ? cause
-        : new Error("Unable to update scan title.")
+        : new Error("Unable to update the scan.")
     }
   }
+
+  const handleUpdateHistoryScan = (scanId: string, title: string) =>
+    updateScan(scanId, { title })
+
+  const handleUpdateScanCategory = (scanId: string, assetCategory: string) =>
+    updateScan(scanId, { assetCategory })
 
   const handleAnalyticsRangeChange = async (days: number) => {
     setAnalyticsDays(days)
@@ -561,6 +590,8 @@ export default function App() {
           username={username}
           isAdmin={activeAccount?.role === "admin"}
           onUpload={handleUpload}
+          categories={assetCategories}
+          categoriesError={categoriesError}
           onNavigate={setView}
         />
       )
@@ -588,6 +619,8 @@ export default function App() {
           username={username}
           isAdmin={false}
           onUpload={handleUpload}
+          categories={assetCategories}
+          categoriesError={categoriesError}
           onNavigate={setView}
         />
       )
@@ -598,6 +631,7 @@ export default function App() {
           imageUrl={uploadedImageUrl}
           imageName={uploadedImageName}
           scanTitle={scanTitle}
+          assetCategory={scanCategory}
           file={uploadedFile}
           onDone={handleCalculationDone}
           onNavigate={setView}
@@ -614,6 +648,8 @@ export default function App() {
             onNavigate={setView}
             onClose={() => setView("home")}
             onUpload={handleUpload}
+          categories={assetCategories}
+          categoriesError={categoriesError}
           />
           {alertResult && (
             <SeverityAlert
@@ -679,6 +715,8 @@ export default function App() {
           onNavigate={setView}
           onDelete={handleDeleteHistoryScan}
           onEdit={handleUpdateHistoryScan}
+          categories={assetCategories}
+          onChangeCategory={handleUpdateScanCategory}
         />
       ) : null
     default:

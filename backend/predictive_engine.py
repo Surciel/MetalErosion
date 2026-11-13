@@ -3,6 +3,8 @@ from typing import Optional
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
+from asset_categories import CATEGORY_RATES
+
 # ASTM D610 rust grade scale: (maximum rusted surface %, grade, remediation protocol).
 ASTM_D610_SCALE = [
     (0.01, 10, "No action required. Standard cleaning."),
@@ -42,13 +44,9 @@ def spread_factor(coverage_ratio: Optional[float]) -> float:
 
 class ISOPredictiveEngine:
     def __init__(self):
-        # 1. Define the ISO 9223 macro-environmental baseline slopes
-        self.category_slopes = {
-            "Hardware": 0.045,      # 730 days to critical (accounts for zinc/friction)
-            "Vehicles": 0.018,      # 1,825 days to critical
-            "Household": 0.009,     # 3,650 days to critical
-            "Metal Walls": 0.006    # 5,475 days to critical
-        }
+        # 1. Baseline slope per asset category (% rust per day). The values, what they
+        #    are based on and the published evidence are defined in asset_categories.py.
+        self.category_slopes = dict(CATEGORY_RATES)
 
         self.trained_models = {}
 
@@ -138,5 +136,7 @@ class ISOPredictiveEngine:
             "base_regression_slope": round(base_slope, 4),
             "spread_coverage": coverage_ratio if distribution_type else None,
             "spread_factor": factor,
-            "active_regression_slope": round(active_slope, 4)
+            "active_regression_slope": round(active_slope, 4),
+            # Unrounded, for the decision support timing (not sent to the client).
+            "active_slope_exact": float(active_slope),
         }

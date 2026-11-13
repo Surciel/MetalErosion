@@ -127,6 +127,8 @@ export default function BoundingBoxImage({
         src={src}
         alt={alt}
         className={imageClassName}
+        loading="lazy"
+        decoding="async"
         onLoad={(event) =>
           setNaturalSize({
             width: event.currentTarget.naturalWidth,

@@ -130,9 +130,17 @@ export default function AnalyticsPage({
             subtitle="How the rust was spread on each scanned surface."
             table={toTable("Distribution", "Scans", summary.byDistribution)}
             empty={emptyText}
-            className="lg:col-span-2"
           >
             <CountBarChart data={summary.byDistribution} direction="bars" unit="scans" />
+          </ChartCard>
+
+          <ChartCard
+            title="Scans by asset category"
+            subtitle="The kind of object chosen for each scan. It sets the baseline corrosion rate."
+            table={toTable("Asset category", "Scans", summary.byCategory)}
+            empty={emptyText}
+          >
+            <CountBarChart data={summary.byCategory} direction="bars" unit="scans" />
           </ChartCard>
         </div>
       </main>

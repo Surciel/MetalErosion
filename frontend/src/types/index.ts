@@ -79,6 +79,21 @@ export type DistributionType = "S" | "G" | "P" | "H"
 /** Environmental lighting of the analysed photo (rejected exposures never produce a result). */
 export type LightingStatus = "ok" | "low_light" | "overexposed"
 
+/** One asset category as defined by the backend (GET /asset-categories). */
+export interface AssetCategory {
+  name: string
+  description: string
+  examples: string
+  /** Baseline rust growth, % of the metal surface per day. */
+  ratePerDay: number
+  yearsNewToCritical: number
+  /** Where the rate comes from. */
+  basis: string
+  /** Published facts behind the category's place in the order. */
+  evidence: string
+  sources: string[]
+}
+
 /** System-wide aggregates for the admin charts (GET /admin/analytics). */
 export interface AdminAnalytics {
   days: number
@@ -89,6 +104,7 @@ export interface AdminAnalytics {
   byPriority: Record<string, number>
   byDistribution: Record<string, number>
   byLighting: Record<string, number>
+  byCategory: Record<string, number>
   rejections: Record<string, number>
   /** False until migration 003 has created the rejection log. */
   rejectionsAvailable: boolean
@@ -116,18 +132,41 @@ export interface ScanResult {
   spreadFactor: number | null
   /** Effective corrosion rate used for the prediction, in rust % per day. */
   regressionSlope: number | null
+  /** Chosen by the user; null for scans saved before categories were recorded. */
+  assetCategory: string | null
+  /** Baseline corrosion rate of the category, in rust % per day. */
+  categoryRate: number | null
   lightingStatus: LightingStatus | null
   qualityWarnings: QualityWarning[]
   priorityLevel: string
   classification: string
   classificationLabel: string
   dss: string
+  /** The full maintenance answer; null when the backend did not send one. */
+  decisionSupport?: DecisionSupport | null
   boxCoordinates: number[]
   rustExplanation?: string
   classificationExplanation?: string
   date: string
   createdAt?: string
   accountId?: string
+}
+
+/** The rule-based maintenance answer for a scan (backend/decision_support.py). */
+export interface DecisionSupport {
+  /** Action level, 1 (no repair) to 6 (assess for replacement). */
+  level: number
+  headline: string
+  summary: string
+  steps: string[]
+  /** Days until the projection crosses into the next level; null when not applicable. */
+  actWithinDays: number | null
+  rescanInDays: number | null
+  reasons: string[]
+  ifDelayed: string
+  limits: string[]
+  confidence: "normal" | "reduced"
+  sources: { label: string; url: string }[]
 }
 
 export interface AnalysisResponse {
@@ -142,10 +181,13 @@ export interface AnalysisResponse {
   spread_coverage?: number | null
   spread_factor?: number | null
   regression_slope?: number | null
+  asset_category?: string | null
+  category_rate?: number | null
   lighting_status?: string | null
   quality_warnings?: string[] | null
   priority_level: string
   recommendation: string
+  decision_support?: unknown
   box_coordinates: number[]
   scan_id: string | number | null
   image_url?: string | null
@@ -156,6 +198,7 @@ export interface AnalysisResponse {
 export interface AnalyzeCorrosionOptions {
   accessToken?: string
   title?: string
+  assetCategory?: string
   signal?: AbortSignal
   timeoutMs?: number
 }

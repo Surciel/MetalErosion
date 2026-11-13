@@ -1,10 +1,12 @@
 import os
 import logging
 import re
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import unquote
 from uuid import UUID, uuid4
 
 import cv2
@@ -24,6 +26,8 @@ from image_quality import (
     assess_sharpness,
     detect_image_format,
 )
+from asset_categories import CATEGORY_NAMES, LEGACY_CATEGORY, category_payload
+from decision_support import build_decision_support
 from predictive_engine import ISOPredictiveEngine
 from rust_measurement import colour_rust_mask, rust_patch_boxes
 from spread_analysis import classify_distribution
@@ -67,6 +71,10 @@ app.add_middleware(
 
 prediction_engine = ISOPredictiveEngine()
 model = YOLO(MODEL_PATH)
+# The scan endpoint runs in a worker thread so the server keeps answering other requests
+# during a scan. The models are not safe to run from two threads at once, so scans take
+# turns at the inference steps.
+_inference_lock = threading.Lock()
 
 
 def _class_id(name: str) -> int:
@@ -185,8 +193,23 @@ class RecoveryUpdate(BaseModel):
     status: str = Field(pattern="^(verified|completed|failed)$")
 
 
-class ScanTitleUpdate(BaseModel):
-    title: str = Field(min_length=1, max_length=120)
+class ScanUpdate(BaseModel):
+    """Fields of a saved scan the owner may change. At least one must be given."""
+
+    title: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    asset_category: Optional[str] = None
+
+
+def _category_error() -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={
+            "code": "category_required",
+            "message": "Choose the kind of object being scanned: "
+            + ", ".join(CATEGORY_NAMES)
+            + ".",
+        },
+    )
 
 
 def _authorization_token(authorization: Optional[str]) -> str:
@@ -275,7 +298,21 @@ def _scan_response(
     title: Optional[str] = None,
     lighting_status: Optional[str] = None,
     quality_warnings: Optional[list[str]] = None,
+    asset_category: Optional[str] = None,
 ) -> dict[str, Any]:
+    # The maintenance answer is built from the scan's own values every time, so scans
+    # saved before this existed get it too and nothing extra is stored.
+    decision = build_decision_support(
+        rust_percentage=rust_percentage,
+        astm_grade=report["astm_grade"],
+        distribution_type=report["distribution_type"],
+        asset_category=asset_category,
+        days_to_critical=report["days_to_critical"],
+        active_slope=report["active_slope_exact"],
+        priority_tier=report["priority_tier"],
+        lighting_status=lighting_status,
+        quality_warnings=quality_warnings,
+    )
     response = {
         "status": "success",
         "filename": filename,
@@ -289,8 +326,13 @@ def _scan_response(
         "spread_coverage": report["spread_coverage"],
         "spread_factor": report["spread_factor"],
         "regression_slope": report["active_regression_slope"],
+        # None for scans saved before a category was recorded (the Hardware rate is used).
+        "asset_category": asset_category,
+        "category_rate": report["base_regression_slope"],
         "priority_level": report["priority_tier"],
-        "recommendation": report["remediation_protocol"],
+        # One-line form of the answer, for the alert pop-up, the info page and search.
+        "recommendation": f"{decision['headline']} {decision['summary']}",
+        "decision_support": decision,
         "lighting_status": lighting_status,
         "quality_warnings": list(quality_warnings or []),
         "box_coordinates": box_coordinates,
@@ -558,9 +600,13 @@ def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
     # Scans saved before migrations 002/003 have no distribution, lighting or spread
     # columns; a missing spread keeps the category slope unchanged.
     spread_coverage = scan.get("spread_coverage")
+    # Scans saved before migration 004 have no category; they keep the rate they were
+    # analysed with (Hardware) and report the category as not recorded.
+    stored_category = scan.get("asset_category")
+    asset_category = stored_category if stored_category in CATEGORY_NAMES else None
     report = prediction_engine.analyze_scan(
         rust_percentage,
-        "Hardware",
+        asset_category or LEGACY_CATEGORY,
         scan.get("distribution_type"),
         float(spread_coverage) if spread_coverage is not None else None,
     )
@@ -578,17 +624,59 @@ def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
         title=scan.get("title") or filename,
         lighting_status=scan.get("lighting_status"),
         quality_warnings=scan.get("quality_warnings"),
+        asset_category=asset_category,
     )
 
 
-# Columns added by migrations/002_add_distribution_and_lighting.sql and
-# migrations/003_analytics_fields.sql.
+_SIGNED_OBJECT_PATH = re.compile(r"/object/sign/([^/?]+)/([^?]+)")
+
+
+def _storage_path(image_url: Any) -> Optional[str]:
+    """The image's path inside the scan bucket, read from a stored signed URL."""
+    match = _SIGNED_OBJECT_PATH.search(str(image_url or ""))
+    if not match or match.group(1) != SUPABASE_STORAGE_BUCKET:
+        return None
+    return unquote(match.group(2))
+
+
+def _refresh_image_urls(scans: list[dict[str, Any]]) -> None:
+    """Give each scan a fresh image link, in place.
+
+    The link saved with a scan is a signed URL that stops working after
+    SUPABASE_SIGNED_URL_TTL seconds, so saved scans would lose their image. The path
+    inside the link stays valid, so new links are signed for all scans in one request.
+    A failure leaves the stored links as they are.
+    """
+    paths = sorted({path for scan in scans if (path := _storage_path(scan.get("image_url")))})
+    if not paths:
+        return
+    try:
+        signed = supabase.storage.from_(SUPABASE_STORAGE_BUCKET).create_signed_urls(
+            paths, SUPABASE_SIGNED_URL_TTL
+        )
+    except Exception:
+        logger.warning("Scan image links could not be refreshed; using the stored links.")
+        return
+    fresh = {
+        item.get("path"): item.get("signedURL")
+        for item in signed
+        if item.get("signedURL") and not item.get("error")
+    }
+    for scan in scans:
+        url = fresh.get(_storage_path(scan.get("image_url")))
+        if url:
+            scan["image_url"] = url
+
+
+# Columns added by migrations 002 (distribution, lighting), 003 (analytics fields) and
+# 004 (asset category).
 SCAN_ANALYSIS_COLUMNS = (
     "distribution_type",
     "lighting_status",
     "days_to_critical",
     "spread_coverage",
     "quality_warnings",
+    "asset_category",
 )
 
 
@@ -634,7 +722,7 @@ def _insert_scan(payload: dict[str, Any]) -> Any:
                 raise
             logger.warning(
                 "scans table has no %s column; saving the scan without it. "
-                "Run the SQL files in backend/migrations (002 and 003).",
+                "Run the SQL files in backend/migrations (002, 003 and 004).",
                 ", ".join(missing),
             )
             for column in missing:
@@ -644,9 +732,9 @@ def _insert_scan(payload: dict[str, Any]) -> Any:
 
 @app.post("/analyze-asset")
 @app.post("/analyze-corrosion")
-async def analyze_corrosion(
+def analyze_corrosion(
     file: UploadFile = File(...),
-    asset_category: str = Form("Hardware"),
+    asset_category: str = Form(""),
     title: str = Form(""),
     submitted_user_id: Optional[str] = Form(default=None),
     user: dict[str, Any] = Depends(current_user),
@@ -654,7 +742,8 @@ async def analyze_corrosion(
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image.")
 
-    contents = await file.read()
+    # Read one byte past the limit at most, so an oversized upload is not held in memory.
+    contents = file.file.read(MAX_IMAGE_BYTES + 1)
     if not contents or len(contents) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Image is empty or too large.")
     if submitted_user_id and submitted_user_id != user["id"]:
@@ -668,13 +757,11 @@ async def analyze_corrosion(
         raise HTTPException(status_code=400, detail="A scan title is required.")
     if len(normalized_title) > 120:
         raise HTTPException(status_code=400, detail="Scan titles must be 120 characters or fewer.")
-    if asset_category not in prediction_engine.category_slopes:
-        raise HTTPException(
-            status_code=400,
-            detail="Unknown asset category. Use one of: "
-            + ", ".join(prediction_engine.category_slopes)
-            + ".",
-        )
+    # The category sets the baseline corrosion rate, so it must be chosen explicitly:
+    # there is no default, and anything outside the defined list is refused.
+    asset_category = asset_category.strip()
+    if asset_category not in CATEGORY_NAMES:
+        raise _category_error()
 
     # The real format comes from the file's bytes, not the browser's content-type header.
     image_format = detect_image_format(contents)
@@ -723,7 +810,9 @@ async def analyze_corrosion(
         )
 
     # Stage 1: whole-image metal check (skipped when no classifier is installed).
-    if not passes_metal_classifier(image):
+    with _inference_lock:
+        is_metal = passes_metal_classifier(image)
+    if not is_metal:
         raise _reject_scan(
             user,
             "not_metal",
@@ -734,7 +823,8 @@ async def analyze_corrosion(
 
     # Stage 2: locate the metal and the rust on it.
     try:
-        segmentation = _segment_surface(image)
+        with _inference_lock:
+            segmentation = _segment_surface(image)
     except Exception as exc:
         logger.exception("Corrosion model inference failed")
         raise HTTPException(
@@ -812,6 +902,7 @@ async def analyze_corrosion(
         "days_to_critical": report["days_to_critical"],
         "spread_coverage": report["spread_coverage"],
         "quality_warnings": quality_warnings,
+        "asset_category": asset_category,
     }
     try:
         inserted = _insert_scan(supabase_payload)
@@ -842,6 +933,7 @@ async def analyze_corrosion(
         title=normalized_title,
         lighting_status=lighting.status,
         quality_warnings=quality_warnings,
+        asset_category=asset_category,
     )
 
 @app.get("/history")
@@ -853,22 +945,33 @@ def history(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]
         .order("created_at", desc=True)
         .execute()
     )
-    return [_history_scan_response(scan) for scan in (response.data or [])]
+    scans = list(response.data or [])
+    _refresh_image_urls(scans)
+    return [_history_scan_response(scan) for scan in scans]
 
 
 @app.patch("/history/{scan_id}")
 def update_history_scan(
     scan_id: UUID,
-    changes: ScanTitleUpdate,
+    changes: ScanUpdate,
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
-    title = changes.title.strip()
-    if not title:
-        raise HTTPException(status_code=400, detail="A scan title is required.")
+    updates: dict[str, Any] = {}
+    if changes.title is not None:
+        title = changes.title.strip()
+        if not title:
+            raise HTTPException(status_code=400, detail="A scan title is required.")
+        updates["title"] = title
+    if changes.asset_category is not None:
+        if changes.asset_category not in CATEGORY_NAMES:
+            raise _category_error()
+        updates["asset_category"] = changes.asset_category
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update.")
 
     existing = (
         supabase.table("scans")
-        .select("*")  # "*" also returns the optional migration 002 columns when present
+        .select("*")  # "*" also returns the optional migration columns when present
         .eq("id", str(scan_id))
         .eq("user_id", user["id"])
         .maybe_single()
@@ -878,23 +981,59 @@ def update_history_scan(
     if not scan:
         raise HTTPException(status_code=404, detail="Scan history was not found.")
 
-    try:
-        updated = (
+    if "asset_category" in updates:
+        # The category changes the corrosion rate, so the stored prediction is redone.
+        coverage = scan.get("spread_coverage")
+        report = prediction_engine.analyze_scan(
+            float(scan["rust_percentage"]),
+            updates["asset_category"],
+            scan.get("distribution_type"),
+            float(coverage) if coverage is not None else None,
+        )
+        updates["days_to_critical"] = report["days_to_critical"]
+
+    def _save(fields: dict[str, Any]) -> Any:
+        return (
             supabase.table("scans")
-            .update({"title": title})
+            .update(fields)
             .eq("id", str(scan_id))
             .eq("user_id", user["id"])
             .execute()
         )
-    except Exception as exc:
-        logger.exception("Scan title update failed")
-        raise HTTPException(
-            status_code=502,
-            detail="The scan title could not be updated.",
-        ) from exc
 
-    updated_scan = {**scan, **(updated.data[0] if updated.data else {}), "title": title}
+    try:
+        updated = _save(updates)
+    except Exception as exc:
+        message = str(exc)
+        if "asset_category" in updates and "asset_category" in message:
+            raise HTTPException(
+                status_code=409,
+                detail="The asset category cannot be saved yet. Run "
+                "backend/migrations/004_asset_category.sql in Supabase.",
+            ) from exc
+        if "days_to_critical" in updates and "days_to_critical" in message:
+            # Migration 002 has not been run: save without the stored prediction.
+            fields = {key: value for key, value in updates.items() if key != "days_to_critical"}
+            try:
+                updated = _save(fields)
+            except Exception as retry_exc:
+                logger.exception("Scan update failed")
+                raise HTTPException(
+                    status_code=502, detail="The scan could not be updated."
+                ) from retry_exc
+        else:
+            logger.exception("Scan update failed")
+            raise HTTPException(status_code=502, detail="The scan could not be updated.") from exc
+
+    updated_scan = {**scan, **(updated.data[0] if updated.data else {}), **updates}
+    _refresh_image_urls([updated_scan])
     return _history_scan_response(updated_scan)
+
+
+@app.get("/asset-categories")
+def asset_categories(_user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
+    """The asset categories with their rates and supporting evidence, for the picker."""
+    return category_payload()
 
 
 @app.get("/me")
@@ -918,7 +1057,7 @@ def delete_history_scan(
 ) -> dict[str, Any]:
     existing = (
         supabase.table("scans")
-        .select("id")
+        .select("id,image_url")
         .eq("id", str(scan_id))
         .eq("user_id", user["id"])
         .maybe_single()
@@ -938,6 +1077,16 @@ def delete_history_scan(
             status_code=502,
             detail="The scan history could not be deleted.",
         ) from exc
+
+    # Remove the photo too, so a deleted scan leaves nothing behind in storage. Only
+    # files inside the owner's own folder are removed; a failure here does not undo the
+    # deletion of the record.
+    storage_path = _storage_path(scan.get("image_url"))
+    if storage_path and storage_path.startswith(f"scans/{user['id']}/"):
+        try:
+            supabase.storage.from_(SUPABASE_STORAGE_BUCKET).remove([storage_path])
+        except Exception:
+            logger.warning("The image of deleted scan %s could not be removed.", scan_id)
 
     return {"status": "deleted", "scan_id": str(scan_id)}
 
@@ -1029,11 +1178,11 @@ def admin_metrics(
         )
         return int(result.count or 0)
 
+    # The profiles table has no status column, so every account counts as active.
     accounts = supabase.table("profiles").select("id", count="exact").execute()
-    active_accounts = supabase.table("profiles").select("id", count="exact").execute()
     metrics = {
         "total_accounts": int(accounts.count or 0),
-        "active_accounts": int(active_accounts.count or 0),
+        "active_accounts": int(accounts.count or 0),
         "scans_today": count_since(start_day),
         "scans_this_week": count_since(start_week),
         "scans_this_month": count_since(start_month),
@@ -1085,6 +1234,7 @@ def admin_analytics(
     by_priority: dict[str, int] = {}
     by_distribution: dict[str, int] = {}
     by_lighting: dict[str, int] = {}
+    by_category: dict[str, int] = {}
     for scan in scans:
         created = _parse_timestamp(scan.get("created_at"))
         if created is not None:
@@ -1092,9 +1242,11 @@ def admin_analytics(
             if day in per_day:
                 per_day[day] += 1
         coverage = scan.get("spread_coverage")
+        stored_category = scan.get("asset_category")
+        category = stored_category if stored_category in CATEGORY_NAMES else None
         report = prediction_engine.analyze_scan(
             float(scan["rust_percentage"]),
-            "Hardware",
+            category or LEGACY_CATEGORY,
             scan.get("distribution_type"),
             float(coverage) if coverage is not None else None,
         )
@@ -1103,6 +1255,7 @@ def admin_analytics(
             (by_priority, report["priority_tier"]),
             (by_distribution, scan.get("distribution_type") or "none"),
             (by_lighting, scan.get("lighting_status") or "unknown"),
+            (by_category, category or "not_recorded"),
         ):
             counts[key] = counts.get(key, 0) + 1
 
@@ -1132,6 +1285,7 @@ def admin_analytics(
         "by_priority": by_priority,
         "by_distribution": by_distribution,
         "by_lighting": by_lighting,
+        "by_category": by_category,
         "rejections": rejections,
         "rejections_available": rejections_available,
     }
