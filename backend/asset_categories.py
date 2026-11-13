@@ -29,6 +29,10 @@ from dataclasses import dataclass
 # Rust coverage at which a surface is treated as critical (start of ASTM D610 grade 1).
 CRITICAL_RUST_PERCENTAGE = 33.0
 
+# Fallback rate for the "Unmapped Category" option and for any category with no
+# configured slope. Set faster than every category so an unknown object is flagged early.
+UNMAPPED_RATE_PER_DAY = 0.09
+
 SOURCES = {
     "AGA_ISO9223": "American Galvanizers Association, 'HDG Corrosion Rates for ISO Categories C1-C5/X' (ISO 9223 Table 2 zinc rates). https://galvanizeit.org/knowledgebase/article/hdg-corrosion-rates-for-iso-categories-c1-c5-x",
     "AGA_TFM": "American Galvanizers Association, 'The Zinc Coating Life Predictor' (time to first maintenance = 5% red rust). https://galvanizeit.org/knowledgebase/article/the-zinc-coating-life-predictor",
@@ -110,6 +114,20 @@ ASSET_CATEGORIES: tuple[AssetCategory, ...] = (
             "30 years until 5% of the surface shows rust, so this category is set slowest."
         ),
         sources=("GALVINFO", "AGA_ISO9223", "AGA_TFM"),
+    ),
+    # Kept last in the picker: chosen when the object fits none of the categories above.
+    AssetCategory(
+        name="Unmapped Category",
+        description="Fallback rate used when a category has no configured slope.",
+        examples="Objects that fit none of the categories above",
+        rate_per_day=UNMAPPED_RATE_PER_DAY,
+        basis="Project assumption: a rust-free item reaches 33% rust in about 1 year.",
+        evidence=(
+            "No published source covers an unclassified object, so the fallback is set "
+            "faster than every configured category. Predicting early is the cautious "
+            "choice when the type of object is unknown."
+        ),
+        sources=(),
     ),
 )
 

@@ -17,7 +17,7 @@ This guide covers the six **[SYSTEM]** tasks from the pre-defense task board. Fo
 ## 0. Before you test
 
 1. **Use the new model.** `backend/models/best.pt` must be the **metal + rust segmentation model**: 23 MB, `task: segment`, classes `{0: metal, 1: rust}`. The backend now refuses to start with the old single-class `corrosion` detector and says so clearly. The new model is in the working copy but **not committed yet**.
-2. **Run the database migration.** In the Supabase dashboard, open the SQL editor and run [`backend/migrations/002_add_distribution_and_lighting.sql`](backend/migrations/002_add_distribution_and_lighting.sql). It adds the `distribution_type`, `lighting_status` and `days_to_critical` columns to `scans`.
+2. **Run the database migration.** In the Supabase dashboard, open the SQL editor and run [`backend/migrations/002_add_distribution_and_lighting.sql`](../backend/migrations/002_add_distribution_and_lighting.sql). It adds the `distribution_type`, `lighting_status` and `days_to_critical` columns to `scans`.
    - If you skip it, scans still save. The backend logs a warning and leaves those three fields out, so history won't show the distribution or lighting status.
 3. **Restart both servers.**
    ```powershell
@@ -55,10 +55,10 @@ This guide covers the six **[SYSTEM]** tasks from the pre-defense task board. Fo
 
 | File | Change |
 |---|---|
-| [`frontend/src/components/ScanPreparationModal.tsx`](frontend/src/components/ScanPreparationModal.tsx) | Crop modes, zoom and crop canvas removed. Shows the full preview and the name input; Enter submits. |
+| [`frontend/src/components/ScanPreparationModal.tsx`](../frontend/src/components/ScanPreparationModal.tsx) | Crop modes, zoom and crop canvas removed. Shows the full preview and the name input; Enter submits. |
 | `frontend/src/utils/cropImage.ts` | Deleted. |
-| [`frontend/package.json`](frontend/package.json) | Removed `react-easy-crop` and `react-image-crop`. |
-| [`HomePage.tsx`](frontend/src/pages/HomePage.tsx), [`ResultsPage.tsx`](frontend/src/pages/ResultsPage.tsx) | Variable rename only (`croppedFile` → `scanFile`). |
+| [`frontend/package.json`](../frontend/package.json) | Removed `react-easy-crop` and `react-image-crop`. |
+| [`HomePage.tsx`](../frontend/src/pages/HomePage.tsx), [`ResultsPage.tsx`](../frontend/src/pages/ResultsPage.tsx) | Variable rename only (`croppedFile` → `scanFile`). |
 
 **Check by hand**
 - [ ] Uploading from **Home** and from **Add another image** on the results page opens the pop-up with the full image.
@@ -80,10 +80,10 @@ This guide covers the six **[SYSTEM]** tasks from the pre-defense task board. Fo
 
 | File | Change |
 |---|---|
-| [`backend/main.py`](backend/main.py) | `_segment_surface()`, the `SurfaceSegmentation` class (`is_metal_surface`, `rust_percentage`), the startup check for model type and classes, the 422 `not_metal` error, and import cleanup. |
-| [`backend/.env.example`](backend/.env.example) | New settings `VALIDATION_CONFIDENCE=0.5` and `MIN_SURFACE_AREA_RATIO=0.05`. |
-| [`frontend/src/services/api.ts`](frontend/src/services/api.ts) | `parseError()` reads structured `{detail: {code, message}}` errors; 422 `not_metal` becomes the `not-metal` error type. |
-| [`frontend/src/pages/CalculatingPage.tsx`](frontend/src/pages/CalculatingPage.tsx) | "Invalid input" screen with a **Choose another image** button and no retry, since retrying the same photo can't help. |
+| [`backend/main.py`](../backend/main.py) | `_segment_surface()`, the `SurfaceSegmentation` class (`is_metal_surface`, `rust_percentage`), the startup check for model type and classes, the 422 `not_metal` error, and import cleanup. |
+| [`backend/.env.example`](../backend/.env.example) | New settings `VALIDATION_CONFIDENCE=0.5` and `MIN_SURFACE_AREA_RATIO=0.05`. |
+| [`frontend/src/services/api.ts`](../frontend/src/services/api.ts) | `parseError()` reads structured `{detail: {code, message}}` errors; 422 `not_metal` becomes the `not-metal` error type. |
+| [`frontend/src/pages/CalculatingPage.tsx`](../frontend/src/pages/CalculatingPage.tsx) | "Invalid input" screen with a **Choose another image** button and no retry, since retrying the same photo can't help. |
 
 **Settings you can tune** (in `backend/.env`, restart the backend after changing):
 - `VALIDATION_CONFIDENCE`: raise it if non-metal photos get through; lower it if real metal gets rejected.
@@ -103,7 +103,7 @@ This guide covers the six **[SYSTEM]** tasks from the pre-defense task board. Fo
 
 The low rust band recovers rust the model is unsure about, and the metal-overlap rule stops low-confidence "rust" on wood, walls or skin from being counted. Each scan logs `low_conf_rust(kept=…, dropped=…)` in the backend terminal. Set `RUST_CONFIDENCE=0.25` to turn the low band off.
 
-**Choosing the thresholds by measurement:** [`backend/tools/evaluate_thresholds.py`](backend/tools/evaluate_thresholds.py) runs the model on a labelled test set and reports, for each threshold, the share of metal photos wrongly rejected and of non-metal photos wrongly accepted. It also compares `RUST_MEASUREMENT=color` against `mask` with the labelled rust share. Run it from the `backend` folder:
+**Choosing the thresholds by measurement:** [`backend/tools/evaluate_thresholds.py`](../backend/tools/evaluate_thresholds.py) runs the model on a labelled test set and reports, for each threshold, the share of metal photos wrongly rejected and of non-metal photos wrongly accepted. It also compares `RUST_MEASUREMENT=color` against `mask` with the labelled rust share. Run it from the `backend` folder:
 ```powershell
 python tools/evaluate_thresholds.py --data <test split folder> --negatives <non-metal photos> --out <results folder>
 ```
@@ -136,9 +136,9 @@ rust % = rust-coloured pixels inside the metal ÷ metal surface pixels. The dist
 
 | File | Change |
 |---|---|
-| [`backend/rust_measurement.py`](backend/rust_measurement.py) | **New.** `colour_rust_mask()` (the HSV thresholds are constants at the top of the file) and `rust_patch_boxes()`. |
-| [`backend/main.py`](backend/main.py) | The `RUST_MEASUREMENT` setting; `SurfaceSegmentation.measured_rust_mask`; spread analysis now uses the measured rust. |
-| [`backend/.env.example`](backend/.env.example) | `RUST_MEASUREMENT=color`. |
+| [`backend/rust_measurement.py`](../backend/rust_measurement.py) | **New.** `colour_rust_mask()` (the HSV thresholds are constants at the top of the file) and `rust_patch_boxes()`. |
+| [`backend/main.py`](../backend/main.py) | The `RUST_MEASUREMENT` setting; `SurfaceSegmentation.measured_rust_mask`; spread analysis now uses the measured rust. |
+| [`backend/.env.example`](../backend/.env.example) | `RUST_MEASUREMENT=color`. |
 
 **Setting `RUST_MEASUREMENT`** (in `backend/.env`):
 - `color` (default): the two-stage method above.
@@ -175,10 +175,10 @@ The backend measures brightness on the **L (lightness) channel of LAB colour spa
 
 | File | Change |
 |---|---|
-| [`backend/image_quality.py`](backend/image_quality.py) | **New.** `assess_lighting()`, with every threshold as a named constant at the top of the file. |
-| [`backend/main.py`](backend/main.py) | Rejects unusable exposures and includes `lighting_status` in the response and the saved scan. |
-| [`frontend/src/components/LightingNotice.tsx`](frontend/src/components/LightingNotice.tsx) | **New.** Warning banner shown on the results and history detail pages. |
-| [`CalculatingPage.tsx`](frontend/src/pages/CalculatingPage.tsx) | "The lighting in this photo is unusable." screen. |
+| [`backend/image_quality.py`](../backend/image_quality.py) | **New.** `assess_lighting()`, with every threshold as a named constant at the top of the file. |
+| [`backend/main.py`](../backend/main.py) | Rejects unusable exposures and includes `lighting_status` in the response and the saved scan. |
+| `frontend/src/components/LightingNotice.tsx` | **New.** Warning banner shown on the results and history detail pages. |
+| [`CalculatingPage.tsx`](../frontend/src/pages/CalculatingPage.tsx) | "The lighting in this photo is unusable." screen. |
 
 Rust % now comes from the AI masks (Step 2) instead of fixed colour thresholds, which already makes the result much less sensitive to lighting.
 
@@ -227,11 +227,11 @@ The old table skipped grades 9–6 and had no grade 0. It now follows the full s
 
 | File | Change |
 |---|---|
-| [`backend/spread_analysis.py`](backend/spread_analysis.py) | **New.** `classify_distribution()`, with every threshold as a named constant at the top of the file. |
-| [`backend/predictive_engine.py`](backend/predictive_engine.py) | Full `ASTM_D610_SCALE`, seeded regression, `astm_rating` (e.g. `5-S`) and the distribution type in the output. |
-| [`backend/main.py`](backend/main.py) | Calls the spread analysis and returns `astm_rating`, `distribution_type` and `days_to_critical`. `_insert_scan()` saves the new columns, or falls back if migration 002 hasn't been run. History uses `select("*")`. |
-| [`backend/migrations/002_add_distribution_and_lighting.sql`](backend/migrations/002_add_distribution_and_lighting.sql) | **New** migration. |
-| [`frontend/src/types/index.ts`](frontend/src/types/index.ts), [`api.ts`](frontend/src/services/api.ts) | New fields `astmRating`, `distributionType`, `daysToCritical` and `lightingStatus`. The classification now shows as `ASTM 5-S`. |
+| [`backend/spread_analysis.py`](../backend/spread_analysis.py) | **New.** `classify_distribution()`, with every threshold as a named constant at the top of the file. |
+| [`backend/predictive_engine.py`](../backend/predictive_engine.py) | Full `ASTM_D610_SCALE`, seeded regression, `astm_rating` (e.g. `5-S`) and the distribution type in the output. |
+| [`backend/main.py`](../backend/main.py) | Calls the spread analysis and returns `astm_rating`, `distribution_type` and `days_to_critical`. `_insert_scan()` saves the new columns, or falls back if migration 002 hasn't been run. History uses `select("*")`. |
+| [`backend/migrations/002_add_distribution_and_lighting.sql`](../backend/migrations/002_add_distribution_and_lighting.sql) | **New** migration. |
+| [`frontend/src/types/index.ts`](../frontend/src/types/index.ts), [`api.ts`](../frontend/src/services/api.ts) | New fields `astmRating`, `distributionType`, `daysToCritical` and `lightingStatus`. The classification now shows as `ASTM 5-S`. |
 | Results, history detail and info pages | "Distribution: Spot (S)" line. |
 
 **Decision for the team:** the distribution type does **not** affect the regression yet. The predicted days to critical depend only on rust % and asset category. To make it a true "spread regression", one option is a slope multiplier per type (for example General faster than Pinpoint). That needs agreed values with a source or justification, so it was left out on purpose.
@@ -260,10 +260,10 @@ The **Analysis** text panels were always empty before, because the API never fil
 
 | File | Change |
 |---|---|
-| [`frontend/src/utils/classificationInfo.ts`](frontend/src/utils/classificationInfo.ts) | **New.** The single source for all explanation text. Edit the wording here. |
-| [`frontend/src/components/InfoTooltip.tsx`](frontend/src/components/InfoTooltip.tsx) | **New.** The reusable, accessible tooltip. |
-| [`frontend/src/components/ClassificationTooltips.tsx`](frontend/src/components/ClassificationTooltips.tsx) | **New.** Ready-made tooltips for each value. |
-| [`ResultsPage.tsx`](frontend/src/pages/ResultsPage.tsx), [`HistoryDetailPage.tsx`](frontend/src/pages/HistoryDetailPage.tsx), [`InfoPage.tsx`](frontend/src/pages/InfoPage.tsx) | Tooltips added. |
+| [`frontend/src/utils/classificationInfo.ts`](../frontend/src/utils/classificationInfo.ts) | **New.** The single source for all explanation text. Edit the wording here. |
+| [`frontend/src/components/InfoTooltip.tsx`](../frontend/src/components/InfoTooltip.tsx) | **New.** The reusable, accessible tooltip. |
+| [`frontend/src/components/ClassificationTooltips.tsx`](../frontend/src/components/ClassificationTooltips.tsx) | **New.** Ready-made tooltips for each value. |
+| [`ResultsPage.tsx`](../frontend/src/pages/ResultsPage.tsx), [`HistoryDetailPage.tsx`](../frontend/src/pages/HistoryDetailPage.tsx), [`InfoPage.tsx`](../frontend/src/pages/InfoPage.tsx) | Tooltips added. |
 
 **Check by hand**
 - [ ] Each ⓘ opens on hover, on Tab focus, and on tap in the browser's mobile view.
@@ -291,12 +291,12 @@ A pop-up appears **once, when a new scan finishes**. It never appears when you b
 
 | File | Change |
 |---|---|
-| [`frontend/src/utils/alertSound.ts`](frontend/src/utils/alertSound.ts) | **New.** Tones, audio unlock (`primeAlertAudio`) and the mute setting. |
-| [`frontend/src/components/SeverityAlert.tsx`](frontend/src/components/SeverityAlert.tsx) | **New.** The pop-up. |
-| [`frontend/src/utils/severity.ts`](frontend/src/utils/severity.ts) | `severityLevel()` and `severityColor(scan)` based on grade and priority. |
-| [`frontend/src/App.tsx`](frontend/src/App.tsx) | `alertResult` is set only in `handleCalculationDone` and cleared when you leave the results page. |
-| [`ScanPreparationModal.tsx`](frontend/src/components/ScanPreparationModal.tsx) | Calls `primeAlertAudio()` on Start scan. |
-| [`frontend/src/index.css`](frontend/src/index.css) | Slide-in and critical-pulse animations, turned off for users who prefer reduced motion. |
+| [`frontend/src/utils/alertSound.ts`](../frontend/src/utils/alertSound.ts) | **New.** Tones, audio unlock (`primeAlertAudio`) and the mute setting. |
+| [`frontend/src/components/SeverityAlert.tsx`](../frontend/src/components/SeverityAlert.tsx) | **New.** The pop-up. |
+| [`frontend/src/utils/severity.ts`](../frontend/src/utils/severity.ts) | `severityLevel()` and `severityColor(scan)` based on grade and priority. |
+| [`frontend/src/App.tsx`](../frontend/src/App.tsx) | `alertResult` is set only in `handleCalculationDone` and cleared when you leave the results page. |
+| [`ScanPreparationModal.tsx`](../frontend/src/components/ScanPreparationModal.tsx) | Calls `primeAlertAudio()` on Start scan. |
+| [`frontend/src/index.css`](../frontend/src/index.css) | Slide-in and critical-pulse animations, turned off for users who prefer reduced motion. |
 
 **Check by hand** (in Chrome, with sound on)
 - [ ] A fresh scan plays a sound and shows the pop-up; heavy rust gives the red critical pop-up, which stays until **Acknowledge**.
@@ -402,10 +402,10 @@ Example at 8% rust, Hardware category:
 
 | File | Change |
 |---|---|
-| [`backend/predictive_engine.py`](backend/predictive_engine.py) | `spread_factor()`; `analyze_scan` takes the coverage and returns `spread_factor`, `spread_coverage` and the effective slope. |
-| [`backend/main.py`](backend/main.py) | Passes the measured coverage to the engine, saves it, and returns `spread_coverage`, `spread_factor` and `regression_slope`. History uses the stored coverage. Saving a scan now drops only the columns whose migration is missing. |
-| [`backend/migrations/003_analytics_fields.sql`](backend/migrations/003_analytics_fields.sql) | **New.** Adds `scans.spread_coverage`. Safe to run more than once. |
-| [`frontend/src/utils/classificationInfo.ts`](frontend/src/utils/classificationInfo.ts), [`api.ts`](frontend/src/services/api.ts), [`types/index.ts`](frontend/src/types/index.ts) | New fields; the classification explanation and the priority tooltip now state the spread and its factor. |
+| [`backend/predictive_engine.py`](../backend/predictive_engine.py) | `spread_factor()`; `analyze_scan` takes the coverage and returns `spread_factor`, `spread_coverage` and the effective slope. |
+| [`backend/main.py`](../backend/main.py) | Passes the measured coverage to the engine, saves it, and returns `spread_coverage`, `spread_factor` and `regression_slope`. History uses the stored coverage. Saving a scan now drops only the columns whose migration is missing. |
+| [`backend/migrations/003_analytics_fields.sql`](../backend/migrations/003_analytics_fields.sql) | **New.** Adds `scans.spread_coverage`. Safe to run more than once. |
+| [`frontend/src/utils/classificationInfo.ts`](../frontend/src/utils/classificationInfo.ts), [`api.ts`](../frontend/src/services/api.ts), [`types/index.ts`](../frontend/src/types/index.ts) | New fields; the classification explanation and the priority tooltip now state the spread and its factor. |
 
 **Check by hand**
 - [ ] Run migration 003 in the Supabase SQL editor and restart the backend.
@@ -437,12 +437,12 @@ The upload is now checked in this order. Anything rejected is never uploaded or 
 
 | File | Change |
 |---|---|
-| [`backend/image_quality.py`](backend/image_quality.py) | `assess_sharpness()`, `detect_image_format()`, `MIN_IMAGE_SIDE`. |
-| [`backend/main.py`](backend/main.py) | The new checks, `quality_warnings`, and `_reject_scan()` which logs the reason. |
-| [`backend/migrations/003_analytics_fields.sql`](backend/migrations/003_analytics_fields.sql) | Adds `scans.quality_warnings` and the `scan_rejections` table. |
-| [`frontend/src/components/ScanPreparationModal.tsx`](frontend/src/components/ScanPreparationModal.tsx) | File type and size check before upload. |
-| [`frontend/src/components/QualityNotice.tsx`](frontend/src/components/QualityNotice.tsx) | **New.** Replaces `LightingNotice`; one banner for lighting, blur and small-metal warnings. |
-| [`CalculatingPage.tsx`](frontend/src/pages/CalculatingPage.tsx), [`api.ts`](frontend/src/services/api.ts), [`types/index.ts`](frontend/src/types/index.ts) | "This photo is too blurry." and "This photo is too small." screens. |
+| [`backend/image_quality.py`](../backend/image_quality.py) | `assess_sharpness()`, `detect_image_format()`, `MIN_IMAGE_SIDE`. |
+| [`backend/main.py`](../backend/main.py) | The new checks, `quality_warnings`, and `_reject_scan()` which logs the reason. |
+| [`backend/migrations/003_analytics_fields.sql`](../backend/migrations/003_analytics_fields.sql) | Adds `scans.quality_warnings` and the `scan_rejections` table. |
+| [`frontend/src/components/ScanPreparationModal.tsx`](../frontend/src/components/ScanPreparationModal.tsx) | File type and size check before upload. |
+| [`frontend/src/components/QualityNotice.tsx`](../frontend/src/components/QualityNotice.tsx) | **New.** Replaces `LightingNotice`; one banner for lighting, blur and small-metal warnings. |
+| [`CalculatingPage.tsx`](../frontend/src/pages/CalculatingPage.tsx), [`api.ts`](../frontend/src/services/api.ts), [`types/index.ts`](../frontend/src/types/index.ts) | "This photo is too blurry." and "This photo is too small." screens. |
 
 **Check by hand** (run migration 003 again first; it now adds more)
 - [ ] Choose a GIF or a file over 15 MB: the pop-up shows the reason and **Start scan** is disabled.
@@ -477,11 +477,11 @@ Charts are in three places. Each chart card has a **Show table** button with the
 
 | File | Change |
 |---|---|
-| [`frontend/src/components/charts/`](frontend/src/components/charts/) | **New.** `ChartCard`, `CountBarChart`, `ProjectionChart`, `AstmScale`, `ScanDotsChart`, `StatTile`, `AdminAnalyticsSection`, `chartTheme`. |
-| [`frontend/src/pages/AnalyticsPage.tsx`](frontend/src/pages/AnalyticsPage.tsx), [`utils/analytics.ts`](frontend/src/utils/analytics.ts) | **New.** The user analytics page and its counting helpers. |
-| [`App.tsx`](frontend/src/App.tsx), [`SideMenu.tsx`](frontend/src/components/SideMenu.tsx), [`AdminPage.tsx`](frontend/src/pages/AdminPage.tsx), [`ResultsPage.tsx`](frontend/src/pages/ResultsPage.tsx), [`HistoryDetailPage.tsx`](frontend/src/pages/HistoryDetailPage.tsx) | The new `analytics` view and menu item; charts added to the pages. |
-| [`backend/main.py`](backend/main.py) | **New** `GET /admin/analytics?days=…&tz_offset=…` (admin only). |
-| [`frontend/package.json`](frontend/package.json) | Adds `recharts` 3.10.1. |
+| [`frontend/src/components/charts/`](../frontend/src/components/charts/) | **New.** `ChartCard`, `CountBarChart`, `ProjectionChart`, `AstmScale`, `ScanDotsChart`, `StatTile`, `AdminAnalyticsSection`, `chartTheme`. |
+| [`frontend/src/pages/AnalyticsPage.tsx`](../frontend/src/pages/AnalyticsPage.tsx), [`utils/analytics.ts`](../frontend/src/utils/analytics.ts) | **New.** The user analytics page and its counting helpers. |
+| [`App.tsx`](../frontend/src/App.tsx), [`SideMenu.tsx`](../frontend/src/components/SideMenu.tsx), [`AdminPage.tsx`](../frontend/src/pages/AdminPage.tsx), [`ResultsPage.tsx`](../frontend/src/pages/ResultsPage.tsx), [`HistoryDetailPage.tsx`](../frontend/src/pages/HistoryDetailPage.tsx) | The new `analytics` view and menu item; charts added to the pages. |
+| [`backend/main.py`](../backend/main.py) | **New** `GET /admin/analytics?days=…&tz_offset=…` (admin only). |
+| [`frontend/package.json`](../frontend/package.json) | Adds `recharts` 3.10.1. |
 
 **Check by hand**
 - [ ] Results page: the projection chart and the ASTM scale appear under the analysis text; hovering the line shows the projected rust % and grade.
@@ -503,8 +503,8 @@ Smaller: the admin metrics no longer run the same account count twice, and histo
 
 | File | Change |
 |---|---|
-| [`backend/main.py`](backend/main.py) | `_storage_path()`, `_refresh_image_urls()`, the scan endpoint as a worker-thread function with an inference lock, photo removal on delete, bounded upload read. |
-| [`frontend/src/components/BoundingBoxImage.tsx`](frontend/src/components/BoundingBoxImage.tsx) | Lazy image loading. |
+| [`backend/main.py`](../backend/main.py) | `_storage_path()`, `_refresh_image_urls()`, the scan endpoint as a worker-thread function with an inference lock, photo removal on delete, bounded upload read. |
+| [`frontend/src/components/BoundingBoxImage.tsx`](../frontend/src/components/BoundingBoxImage.tsx) | Lazy image loading. |
 
 **Check by hand**
 - [ ] Open the history: scans older than an hour show their photo.
@@ -522,7 +522,7 @@ Smaller: the admin metrics no longer run the same account count twice, and histo
 ### Decision support answers (maintenance recommendation)
 Before this change the Decision Support System showed one fixed sentence per ASTM grade. It cited nothing, ignored the asset category and the distribution type, and gave the same "abrasive blasting and two-coat epoxy" to a pair of scissors and a roof.
 
-**Now** the panel is a rule-based answer built from the scan's own values. It is not AI-written text: the same scan always gives the same answer, and every line traces to a rule in [`backend/decision_support.py`](backend/decision_support.py).
+**Now** the panel is a rule-based answer built from the scan's own values. It is not AI-written text: the same scan always gives the same answer, and every line traces to a rule in [`backend/decision_support.py`](../backend/decision_support.py).
 
 The panel answers:
 
@@ -582,11 +582,11 @@ The steps differ too: Hardware gets wire brush, rust-remover soak and oil; Metal
 
 | File | Change |
 |---|---|
-| [`backend/decision_support.py`](backend/decision_support.py) | **New.** The six levels, steps per category, sources and `build_decision_support()`. |
-| [`backend/main.py`](backend/main.py) | The scan response gains `decision_support`. `recommendation` is still a string: the headline plus the timing sentence. |
-| [`backend/predictive_engine.py`](backend/predictive_engine.py) | Returns the unrounded slope for the timing. No calculation changed. |
-| [`frontend/src/components/DecisionSupportPanel.tsx`](frontend/src/components/DecisionSupportPanel.tsx) | **New.** The panel on the results and history detail pages. |
-| [`frontend/src/services/api.ts`](frontend/src/services/api.ts), [`types/index.ts`](frontend/src/types/index.ts), [`utils/classificationInfo.ts`](frontend/src/utils/classificationInfo.ts) | New `DecisionSupport` type, mapping and tooltip text. |
+| [`backend/decision_support.py`](../backend/decision_support.py) | **New.** The six levels, steps per category, sources and `build_decision_support()`. |
+| [`backend/main.py`](../backend/main.py) | The scan response gains `decision_support`. `recommendation` is still a string: the headline plus the timing sentence. |
+| [`backend/predictive_engine.py`](../backend/predictive_engine.py) | Returns the unrounded slope for the timing. No calculation changed. |
+| [`frontend/src/components/DecisionSupportPanel.tsx`](../frontend/src/components/DecisionSupportPanel.tsx) | **New.** The panel on the results and history detail pages. |
+| [`frontend/src/services/api.ts`](../frontend/src/services/api.ts), [`types/index.ts`](../frontend/src/types/index.ts), [`utils/classificationInfo.ts`](../frontend/src/utils/classificationInfo.ts) | New `DecisionSupport` type, mapping and tooltip text. |
 
 No migration is needed: the answer is rebuilt from stored values, so old scans get it too.
 
@@ -605,7 +605,7 @@ Before this, the four asset categories existed only inside the prediction code a
 
 **How it works**
 - **Chosen on the upload screen.** Four options, each with a description and examples. Nothing is preselected, and **Start scan** stays disabled until one is chosen.
-- **One definition.** [`backend/asset_categories.py`](backend/asset_categories.py) holds each category's name, description, rate, basis and evidence. The prediction code, the upload validation and the picker all read from it (`GET /asset-categories`), so the options shown and the rates used cannot drift apart.
+- **One definition.** [`backend/asset_categories.py`](../backend/asset_categories.py) holds each category's name, description, rate, basis and evidence. The prediction code, the upload validation and the picker all read from it (`GET /asset-categories`), so the options shown and the rates used cannot drift apart.
 - **Saved with the scan** (`scans.asset_category`, migration 004), so History shows the same prediction.
 - **Shown on the result** with its rate, and a tooltip stating what the rate is based on.
 - **Correctable.** On the history detail page, **Change** saves a new category and the backend recalculates the days to critical and priority.
@@ -636,16 +636,16 @@ Before this, the four asset categories existed only inside the prediction code a
 
 **For the paper**
 - Chapter 3's table should say the category is **chosen by the user**, and that the rates are baseline assumptions ordered using the sources above.
-- The row "Unmapped category, 0.09 fallback" no longer describes the system: an unknown category is refused.
+- The row "Unmapped Category, 0.090 fallback" is now a fifth option in the picker, listed last, for objects that fit none of the four categories. Any other name is still refused. Run migration 005 so the database accepts it.
 
 | File | Change |
 |---|---|
-| [`backend/asset_categories.py`](backend/asset_categories.py) | **New.** The categories, rates, basis, evidence and sources. |
-| [`backend/predictive_engine.py`](backend/predictive_engine.py) | Reads the rates from that file instead of defining them. |
-| [`backend/main.py`](backend/main.py) | Category required and validated; saved and returned; `GET /asset-categories`; `PATCH /history/{id}` can change it and recalculates; analytics by category. |
-| [`backend/migrations/004_asset_category.sql`](backend/migrations/004_asset_category.sql) | **New.** Adds `scans.asset_category`. |
-| [`frontend/src/components/ScanPreparationModal.tsx`](frontend/src/components/ScanPreparationModal.tsx) | The picker. |
-| [`frontend/src/components/AssetCategoryLine.tsx`](frontend/src/components/AssetCategoryLine.tsx) | **New.** Shows the category and rate; lets the owner change it. |
+| [`backend/asset_categories.py`](../backend/asset_categories.py) | **New.** The categories, rates, basis, evidence and sources. |
+| [`backend/predictive_engine.py`](../backend/predictive_engine.py) | Reads the rates from that file instead of defining them. |
+| [`backend/main.py`](../backend/main.py) | Category required and validated; saved and returned; `GET /asset-categories`; `PATCH /history/{id}` can change it and recalculates; analytics by category. |
+| [`backend/migrations/004_asset_category.sql`](../backend/migrations/004_asset_category.sql) | **New.** Adds `scans.asset_category`. |
+| [`frontend/src/components/ScanPreparationModal.tsx`](../frontend/src/components/ScanPreparationModal.tsx) | The picker. |
+| [`frontend/src/components/AssetCategoryLine.tsx`](../frontend/src/components/AssetCategoryLine.tsx) | **New.** Shows the category and rate; lets the owner change it. |
 
 **Check by hand** (run migration 004 first)
 - [ ] The upload pop-up lists four categories; **Start scan** is disabled until one is picked.
@@ -727,10 +727,10 @@ The "Now" column was re-measured on this machine and matches the colleague's fig
 
 | File | Change |
 |---|---|
-| [`backend/main.py`](backend/main.py) | `hybrid` mode, `MODEL_CONFIDENCE` from the environment, the classifier (`metal_probability`, `passes_metal_classifier`) and its check before segmentation. Classifier rejections are logged as `not_metal_classifier`. |
+| [`backend/main.py`](../backend/main.py) | `hybrid` mode, `MODEL_CONFIDENCE` from the environment, the classifier (`metal_probability`, `passes_metal_classifier`) and its check before segmentation. Classifier rejections are logged as `not_metal_classifier`. |
 | `backend/models/metal_cls.pt` | **New** (10.5 MB). Must be deployed the same way as `best.pt`. |
-| [`backend/evaluate_system.py`](backend/evaluate_system.py) | **New**, the colleague's test tool. `make_figures.py` has not been received, so it skips the charts. |
-| [`backend/.env.example`](backend/.env.example) | The three tested settings and the optional overrides. |
+| [`backend/evaluate_system.py`](../backend/evaluate_system.py) | **New**, the colleague's test tool. `make_figures.py` has not been received, so it skips the charts. |
+| [`backend/.env.example`](../backend/.env.example) | The three tested settings and the optional overrides. |
 
 **Check by hand**
 - [ ] A rusty metal photo is accepted with a rust %.

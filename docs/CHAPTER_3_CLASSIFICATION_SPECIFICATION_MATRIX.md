@@ -187,12 +187,12 @@ Checks run in the order listed. Rejected scans are not saved; the reason is logg
 
 ## 9. Implementation references
 
-- [backend/decision_support.py](backend/decision_support.py): DSS action levels, steps per category, timing rules, limits and sources.
-- [backend/predictive_engine.py](backend/predictive_engine.py): ASTM grade limits, spread factor, days-to-critical formula and priority tiers.
-- [backend/asset_categories.py](backend/asset_categories.py): the four categories, their rates and the published evidence.
-- [backend/spread_analysis.py](backend/spread_analysis.py): distribution definitions and thresholds.
-- [backend/rust_measurement.py](backend/rust_measurement.py): rust color thresholds and patch boxes.
-- [backend/image_quality.py](backend/image_quality.py): file format, size, lighting and sharpness thresholds.
-- [backend/main.py](backend/main.py): classifier, segmentation, validation order, hybrid measurement and API responses.
-- [frontend/src/components/DecisionSupportPanel.tsx](frontend/src/components/DecisionSupportPanel.tsx): the DSS panel.
-- [frontend/src/utils/severity.ts](frontend/src/utils/severity.ts) and [frontend/src/components/SeverityAlert.tsx](frontend/src/components/SeverityAlert.tsx): severity levels, colors and alert behavior.
+- [backend/decision_support.py](../backend/decision_support.py): DSS action levels, steps per category, timing rules, limits and sources.
+- [backend/predictive_engine.py](../backend/predictive_engine.py): ASTM grade limits, spread factor, days-to-critical formula and priority tiers.
+- [backend/asset_categories.py](../backend/asset_categories.py): the four categories, their rates and the published evidence.
+- [backend/spread_analysis.py](../backend/spread_analysis.py): distribution definitions and thresholds.
+- [backend/rust_measurement.py](../backend/rust_measurement.py): rust color thresholds and patch boxes.
+- [backend/image_quality.py](../backend/image_quality.py): file format, size, lighting and sharpness thresholds.
+- [backend/main.py](../backend/main.py): classifier, segmentation, validation order, hybrid measurement and API responses.
+- [frontend/src/components/DecisionSupportPanel.tsx](../frontend/src/components/DecisionSupportPanel.tsx): the DSS panel.
+- [frontend/src/utils/severity.ts](../frontend/src/utils/severity.ts) and [frontend/src/components/SeverityAlert.tsx](../frontend/src/components/SeverityAlert.tsx): severity levels, colors and alert behavior.

@@ -730,46 +730,40 @@ def _insert_scan(payload: dict[str, Any]) -> Any:
     raise RuntimeError("The scan could not be saved after removing optional columns.")
 
 
-@app.post("/analyze-asset")
-@app.post("/analyze-corrosion")
-def analyze_corrosion(
-    file: UploadFile = File(...),
-    asset_category: str = Form(""),
-    title: str = Form(""),
-    submitted_user_id: Optional[str] = Form(default=None),
-    user: dict[str, Any] = Depends(current_user),
-) -> dict[str, Any]:
+@dataclass
+class ScreenedImage:
+    """A photo that passed every check before rust is measured."""
+
+    image_format: tuple[str, str]  # (file extension, content type)
+    lighting: Any
+    sharpness: Any
+    segmentation: "SurfaceSegmentation"
+    quality_warnings: list[str]
+
+
+def _read_upload(file: UploadFile) -> bytes:
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image.")
-
     # Read one byte past the limit at most, so an oversized upload is not held in memory.
     contents = file.file.read(MAX_IMAGE_BYTES + 1)
     if not contents or len(contents) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="Image is empty or too large.")
-    if submitted_user_id and submitted_user_id != user["id"]:
-        raise HTTPException(
-            status_code=403,
-            detail="The submitted user does not match the authenticated user.",
-        )
+    return contents
 
-    normalized_title = title.strip()
-    if not normalized_title:
-        raise HTTPException(status_code=400, detail="A scan title is required.")
-    if len(normalized_title) > 120:
-        raise HTTPException(status_code=400, detail="Scan titles must be 120 characters or fewer.")
-    # The category sets the baseline corrosion rate, so it must be chosen explicitly:
-    # there is no default, and anything outside the defined list is refused.
-    asset_category = asset_category.strip()
-    if asset_category not in CATEGORY_NAMES:
-        raise _category_error()
 
+def _screen_image(contents: bytes, user: dict[str, Any]) -> ScreenedImage:
+    """Run every photo check: format, size, lighting, sharpness and the metal checks.
+
+    Shared by /check-image (run when the photo is chosen, before a category can be
+    picked) and /analyze-corrosion (run again on the scan itself, so a skipped
+    pre-check never lets a non-metal photo through).
+    """
     # The real format comes from the file's bytes, not the browser's content-type header.
     image_format = detect_image_format(contents)
     if image_format is None:
         raise _reject_scan(
             user, "unsupported_format", "Use a JPEG, PNG or WebP image.", status_code=400
         )
-    file_extension, content_type = image_format
 
     image = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
     if image is None or image.size == 0:
@@ -848,6 +842,63 @@ def analyze_corrosion(
         quality_warnings.append("slightly_blurry")
     if float(segmentation.surface_mask.mean()) < SMALL_SURFACE_RATIO:
         quality_warnings.append("small_surface")
+
+    return ScreenedImage(
+        image_format=image_format,
+        lighting=lighting,
+        sharpness=sharpness,
+        segmentation=segmentation,
+        quality_warnings=quality_warnings,
+    )
+
+
+@app.post("/check-image")
+def check_image(
+    file: UploadFile = File(...),
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    """Check a photo before a scan is set up: the asset category can only be chosen
+    once the photo passes. Nothing is stored; a rejected photo is logged like a
+    rejected scan."""
+    screened = _screen_image(_read_upload(file), user)
+    return {"ok": True, "quality_warnings": screened.quality_warnings}
+
+
+@app.post("/analyze-asset")
+@app.post("/analyze-corrosion")
+def analyze_corrosion(
+    file: UploadFile = File(...),
+    asset_category: str = Form(""),
+    title: str = Form(""),
+    submitted_user_id: Optional[str] = Form(default=None),
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    contents = _read_upload(file)
+    if submitted_user_id and submitted_user_id != user["id"]:
+        raise HTTPException(
+            status_code=403,
+            detail="The submitted user does not match the authenticated user.",
+        )
+
+    normalized_title = title.strip()
+    if not normalized_title:
+        raise HTTPException(status_code=400, detail="A scan title is required.")
+    if len(normalized_title) > 120:
+        raise HTTPException(status_code=400, detail="Scan titles must be 120 characters or fewer.")
+    # The category sets the baseline corrosion rate, so it must be chosen explicitly:
+    # there is no default, and anything outside the defined list is refused.
+    asset_category = asset_category.strip()
+    if asset_category not in CATEGORY_NAMES:
+        raise _category_error()
+
+    # The photo checks run again here, so a skipped pre-check never lets a
+    # non-metal photo through.
+    screened = _screen_image(contents, user)
+    file_extension, content_type = screened.image_format
+    lighting = screened.lighting
+    sharpness = screened.sharpness
+    segmentation = screened.segmentation
+    quality_warnings = screened.quality_warnings
 
     # Rust coverage is measured against the detected metal surface, not the whole photo
     # (see RUST_MEASUREMENT for how rust pixels inside the surface are counted).

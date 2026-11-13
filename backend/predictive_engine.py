@@ -3,7 +3,7 @@ from typing import Optional
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
-from asset_categories import CATEGORY_RATES
+from asset_categories import CATEGORY_RATES, UNMAPPED_RATE_PER_DAY
 
 # ASTM D610 rust grade scale: (maximum rusted surface %, grade, remediation protocol).
 ASTM_D610_SCALE = [
@@ -92,8 +92,8 @@ class ISOPredictiveEngine:
         distribution type (S/G/P/H) and the measured spread (share of the surface grid
         containing rust), returning the DSS payload.
         """
-        # Fetch the specific slope (Defaulting to 0.09 if category is unmapped)
-        base_slope = float(self.trained_models.get(asset_category, 0.09))
+        # Fetch the specific slope (the unmapped fallback rate if the category has none)
+        base_slope = float(self.trained_models.get(asset_category, UNMAPPED_RATE_PER_DAY))
 
         # The measured spread scales the slope. A surface with no rust has no spread to
         # measure, and scans saved before the spread was stored have none either: both

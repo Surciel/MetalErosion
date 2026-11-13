@@ -332,6 +332,62 @@ export async function analyzeCorrosion(
   }
 }
 
+/**
+ * Runs the backend's photo checks (format, lighting, sharpness, metal) without saving
+ * anything. The scan pop-up calls it so a category can only be picked for a photo that
+ * passes. Throws AnalysisRequestError: `retryable` is false when the photo was rejected
+ * and true when the check itself could not run.
+ */
+export async function checkScanImage(
+  file: File,
+  accessToken: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const formData = new FormData()
+  formData.append("file", file)
+
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE_URL}/check-image`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: formData,
+      signal,
+    })
+  } catch (cause: unknown) {
+    if (cause instanceof DOMException && cause.name === "AbortError") {
+      throw new AnalysisRequestError("cancelled", "Photo check cancelled.", true)
+    }
+    throw new AnalysisRequestError(
+      "network-unavailable",
+      "The photo could not be checked because the analysis service is unavailable. Check that the backend is running.",
+      true,
+    )
+  }
+
+  if (response.ok) return
+  if (response.status === 401) {
+    throw new AnalysisRequestError(
+      "session-expired",
+      "Your session has expired. Please log in again.",
+      false,
+    )
+  }
+  if (response.status === 400 || response.status === 422) {
+    const parsed = await parseError(response)
+    throw new AnalysisRequestError(
+      (parsed.code && REJECTION_KINDS[parsed.code]) || "invalid-image",
+      parsed.message,
+      false,
+    )
+  }
+  throw new AnalysisRequestError(
+    "server-failure",
+    "The photo could not be checked. Try again.",
+    true,
+  )
+}
+
 export async function getScanHistory(accessToken: string): Promise<ScanResult[]> {
   const response = await fetch(`${API_BASE_URL}/history`, {
     headers: {

@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState } from "react"
 import { primeAlertAudio } from "@/utils/alertSound"
+import { AnalysisRequestError, checkScanImage } from "@/services/api"
+import { supabase } from "@/services/supabase"
 import type { AssetCategory } from "@/types"
+
+/** Result of the backend photo check that must pass before a category can be picked. */
+type PhotoCheck =
+  | { state: "checking" }
+  | { state: "passed" }
+  | { state: "rejected"; message: string }
+  | { state: "failed"; message: string }
 
 type ScanPreparationModalProps = {
   file: File
@@ -46,8 +55,48 @@ export default function ScanPreparationModal({
   const titleLength = useMemo(() => title.trim().length, [title])
   const problem = useMemo(() => fileProblem(file), [file])
   const categoriesUnavailable = categories.length === 0
-  const blocked = Boolean(problem) || categoriesUnavailable
-  const selected = categories.find((option) => option.name === category)
+  const [photoCheck, setPhotoCheck] = useState<PhotoCheck>({ state: "checking" })
+  const [checkAttempt, setCheckAttempt] = useState(0)
+  const photoPassed = photoCheck.state === "passed"
+  // A category can only be chosen once the photo is confirmed to show metal.
+  const pickerLocked = categoriesUnavailable || Boolean(problem) || !photoPassed
+  const blocked = pickerLocked
+  const selected = photoPassed
+    ? categories.find((option) => option.name === category)
+    : undefined
+
+  // Run the backend's photo checks (lighting, sharpness, metal) as soon as the photo
+  // is chosen, so a non-metal photo is stopped before a category is picked.
+  useEffect(() => {
+    if (problem) return
+    const controller = new AbortController()
+    setPhotoCheck({ state: "checking" })
+    setCategory("")
+    void (async () => {
+      try {
+        const { data } = await supabase.auth.getSession()
+        const token = data.session?.access_token
+        if (!token) {
+          setPhotoCheck({ state: "failed", message: "Your session has expired. Please log in again." })
+          return
+        }
+        await checkScanImage(file, token, controller.signal)
+        if (!controller.signal.aborted) setPhotoCheck({ state: "passed" })
+      } catch (cause: unknown) {
+        if (controller.signal.aborted) return
+        if (cause instanceof AnalysisRequestError && !cause.retryable) {
+          setPhotoCheck({ state: "rejected", message: cause.message })
+        } else {
+          setPhotoCheck({
+            state: "failed",
+            message:
+              cause instanceof Error ? cause.message : "The photo could not be checked. Try again.",
+          })
+        }
+      }
+    })()
+    return () => controller.abort()
+  }, [file, problem, checkAttempt])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -84,7 +133,9 @@ export default function ScanPreparationModal({
     (categoriesUnavailable
       ? categoriesError ||
         "The asset categories could not be loaded, so the scan cannot start. Check that the backend is running, then choose the image again."
-      : error)
+      : photoCheck.state === "rejected" || photoCheck.state === "failed"
+        ? photoCheck.message
+        : error)
 
   return (
     <div
@@ -129,19 +180,39 @@ export default function ScanPreparationModal({
               <span className="text-right text-[10px] text-white/35">{titleLength}/{MAX_TITLE_LENGTH}</span>
             </label>
 
-            <fieldset className="flex flex-col gap-2" disabled={categoriesUnavailable}>
+            <fieldset
+              className="flex flex-col gap-2"
+              disabled={pickerLocked}
+              aria-describedby="photo-check-status"
+            >
               <legend className="mb-2 text-xs font-mono uppercase tracking-wider text-white/50">
                 What kind of object is this?
               </legend>
               <p className="text-xs leading-relaxed text-white/45">
                 This sets how fast rust is expected to grow, so it changes the predicted days to critical. You can correct it later from the scan's history page.
               </p>
+              {!problem && !categoriesUnavailable && !photoPassed && (
+                <p
+                  id="photo-check-status"
+                  className="rounded-lg border px-3 py-2 text-xs leading-5 text-white/70"
+                  style={{ borderColor: "var(--color-border)" }}
+                  role="status"
+                >
+                  {photoCheck.state === "checking"
+                    ? "Checking the photo for a metal surface… The categories unlock once it passes."
+                    : photoCheck.state === "rejected"
+                      ? "This photo can't be scanned, so no category can be chosen. Choose a different photo."
+                      : "The photo could not be checked yet, so no category can be chosen."}
+                </p>
+              )}
               {categories.map((option) => {
-                const active = option.name === category
+                const active = photoPassed && option.name === category
                 return (
                   <label
                     key={option.name}
-                    className="flex cursor-pointer gap-3 rounded-lg border px-3 py-2.5 transition-colors"
+                    className={`flex gap-3 rounded-lg border px-3 py-2.5 transition-colors ${
+                      pickerLocked ? "cursor-not-allowed opacity-40" : "cursor-pointer"
+                    }`}
                     style={{
                       borderColor: active ? "#f0ede8" : "var(--color-border)",
                       background: active ? "rgba(255,255,255,0.10)" : "transparent",
@@ -177,10 +248,26 @@ export default function ScanPreparationModal({
 
             {message && <p className="text-sm text-red-200" role="alert">{message}</p>}
 
+            {photoCheck.state === "failed" && !problem && (
+              <button
+                type="button"
+                onClick={() => setCheckAttempt((attempt) => attempt + 1)}
+                className="self-start text-sm font-medium text-white/80 underline underline-offset-2 hover:text-white"
+              >
+                Check the photo again
+              </button>
+            )}
+
             <div className="mt-auto flex flex-col gap-2 sm:flex-row md:flex-col">
               <button type="button" onClick={onCancel} className="rounded-lg border px-4 py-2.5 text-sm font-medium text-white/70 hover:text-white" style={{ borderColor: "var(--color-border)" }}>Cancel</button>
               <button type="submit" disabled={blocked || !selected} className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40" style={{ background: "var(--color-accent)" }}>
-                {selected ? `Start scan as ${selected.name}` : "Choose a category to start"}
+                {selected
+                  ? `Start scan as ${selected.name}`
+                  : photoCheck.state === "checking" && !problem
+                    ? "Checking the photo…"
+                    : photoPassed
+                      ? "Choose a category to start"
+                      : "Photo can't be scanned"}
               </button>
             </div>
           </div>
