@@ -14,6 +14,7 @@ import { AXIS_TICK, CHART, STATUS } from "@/components/charts/chartTheme"
 import {
   ASTM_GRADES,
   CRITICAL_RUST_PERCENT,
+  describeDuration,
   gradeForPercent,
 } from "@/utils/classificationInfo"
 import type { ScanResult } from "@/types"
@@ -29,9 +30,12 @@ type Projection = {
 
 const STEPS = 24
 
-function formatDuration(days: number): string {
-  if (days < 730) return `${Math.round(days)} days`
-  return `${(days / 365).toFixed(1)} years`
+/** Whole-year axis ticks (in days) for a long projection: at most about six of them. */
+function yearTicks(horizon: number): number[] {
+  const step = Math.max(1, Math.ceil(horizon / 365 / 5))
+  const ticks: number[] = []
+  for (let year = 0; year * 365 <= horizon; year += step) ticks.push(year * 365)
+  return ticks
 }
 
 function buildProjection(scan: ScanResult): Projection | null {
@@ -100,7 +104,7 @@ export default function ProjectionChart({ scan, className }: { scan: ScanResult;
       critical
         ? `Reaches the critical threshold (${limit}%)`
         : `Passes ${limit}% and drops to grade ${band.grade - 1}`,
-      formatDuration((limit - scan.rustPercent) / slope),
+      describeDuration((limit - scan.rustPercent) / slope),
       `${limit}%`,
     ]
   })
@@ -118,7 +122,7 @@ export default function ProjectionChart({ scan, className }: { scan: ScanResult;
     return (
       <ChartTooltip
         value={`${point.rust.toFixed(1)}% rust`}
-        label={point.day === 0 ? "Measured today" : `Projected after ${formatDuration(point.day)}`}
+        label={point.day === 0 ? "Measured today" : `Projected after ${describeDuration(point.day)}`}
         detail={`ASTM grade ${gradeForPercent(point.rust)}`}
       />
     )
@@ -127,7 +131,7 @@ export default function ProjectionChart({ scan, className }: { scan: ScanResult;
   return (
     <ChartCard
       title={title}
-      subtitle={`Measured today: ${scan.rustPercent}% rust. At this scan's rate of ${slope.toFixed(4)}% per day it reaches the ${CRITICAL_RUST_PERCENT}% critical threshold in about ${formatDuration(daysToCritical)}. Only today's point is measured; the dashed line is a projection, not a forecast from repeated scans.`}
+      subtitle={`Measured today: ${scan.rustPercent}% rust. At this scan's assumed rate of ${slope.toFixed(4)}% per day it reaches the ${CRITICAL_RUST_PERCENT}% critical threshold in ${describeDuration(daysToCritical)}. Only today's point is measured; the dashed line is a projection, not a forecast from repeated scans.`}
       table={table}
       className={className}
     >
@@ -139,8 +143,9 @@ export default function ProjectionChart({ scan, className }: { scan: ScanResult;
             dataKey="day"
             domain={[0, horizon]}
             tickCount={6}
+            ticks={inYears ? yearTicks(horizon) : undefined}
             tickFormatter={(day: number) =>
-              day === 0 ? "Today" : inYears ? `${(day / 365).toFixed(1)}y` : `${day}d`
+              day === 0 ? "Today" : inYears ? `${Math.round(day / 365)}y` : `${day}d`
             }
             tick={AXIS_TICK}
             axisLine={{ stroke: CHART.axis }}
@@ -201,7 +206,7 @@ export default function ProjectionChart({ scan, className }: { scan: ScanResult;
             stroke={CHART.surface}
             strokeWidth={2}
             label={{
-              value: formatDuration(daysToCritical),
+              value: describeDuration(daysToCritical, false),
               position: "top",
               fill: CHART.textPrimary,
               fontSize: 11,

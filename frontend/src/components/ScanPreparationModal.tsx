@@ -128,14 +128,19 @@ export default function ScanPreparationModal({
     onConfirm(file, URL.createObjectURL(file), normalizedTitle, selected.name)
   }
 
-  const message =
+  // One message that stops the scan: shown on its own, with a single way forward.
+  const blockingMessage =
     problem ||
     (categoriesUnavailable
       ? categoriesError ||
         "The asset categories could not be loaded, so the scan cannot start. Check that the backend is running, then choose the image again."
-      : photoCheck.state === "rejected" || photoCheck.state === "failed"
+      : photoCheck.state === "rejected"
         ? photoCheck.message
-        : error)
+        : "")
+  const checking = !blockingMessage && photoCheck.state === "checking"
+  const checkFailed = !blockingMessage && photoCheck.state === "failed"
+  const ready = !blockingMessage && photoPassed
+  const footerHint = error || (ready && !selected ? "Choose what kind of object this is." : "")
 
   return (
     <div
@@ -144,132 +149,144 @@ export default function ScanPreparationModal({
       aria-modal="true"
       aria-labelledby="scan-preparation-title"
     >
-      <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border shadow-2xl" style={{ background: "var(--color-header)", borderColor: "var(--color-border)" }}>
-        <div className="flex items-start justify-between gap-4 border-b px-5 py-4" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-          <div>
-            <p className="text-[10px] font-mono uppercase tracking-[0.18em] text-white/40">Before analysis</p>
-            <h2 id="scan-preparation-title" className="mt-1 text-xl font-semibold text-white">Prepare your scan</h2>
-            <p className="mt-1 text-sm text-white/55">Name the scan and say what kind of object it is. The full image will be analyzed.</p>
-          </div>
-          <button type="button" onClick={onCancel} aria-label="Close scan preparation" className="text-2xl leading-none text-white/50 hover:text-white">×</button>
+      <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border shadow-2xl" style={{ background: "var(--color-header)", borderColor: "var(--color-border)" }}>
+        <div className="flex items-center justify-between gap-4 border-b px-5 py-3.5" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+          <h2 id="scan-preparation-title" className="text-lg font-semibold text-white">New scan</h2>
+          <button type="button" onClick={onCancel} aria-label="Close" className="text-2xl leading-none text-white/50 hover:text-white">×</button>
         </div>
 
         <form
-          className="grid min-h-0 flex-1 gap-5 overflow-y-auto p-5 md:grid-cols-[minmax(0,1fr)_340px]"
+          className="flex min-h-0 flex-1 flex-col"
           onSubmit={(event) => {
             event.preventDefault()
             handleConfirm()
           }}
         >
-          <div className="flex min-h-[260px] items-center justify-center overflow-hidden rounded-xl bg-black/35 p-4">
-            <img src={sourceUrl} alt="Scan preview" className="block max-h-[52vh] max-w-full object-contain" />
-          </div>
+          <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto p-5 md:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="flex items-center justify-center overflow-hidden rounded-xl bg-black/35 p-3 md:sticky md:top-0 md:self-start">
+              <img src={sourceUrl} alt="Scan preview" className="block max-h-[56vh] max-w-full rounded-lg object-contain" />
+            </div>
 
-          <div className="flex flex-col gap-4">
-            <label className="flex flex-col gap-2">
-              <span className="text-xs font-mono uppercase tracking-wider text-white/50">Scan name</span>
-              <input
-                value={title}
-                onChange={(event) => { setTitle(event.target.value); setError("") }}
-                maxLength={MAX_TITLE_LENGTH}
-                autoFocus
-                className="rounded-lg border bg-transparent px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/30 focus:border-white/60"
-                style={{ borderColor: "var(--color-border)" }}
-                placeholder="e.g. Workshop wrench"
-              />
-              <span className="text-right text-[10px] text-white/35">{titleLength}/{MAX_TITLE_LENGTH}</span>
-            </label>
+            <div className="flex flex-col gap-5">
+              {blockingMessage && (
+                <div className="rounded-xl border border-red-300/40 bg-red-500/10 px-4 py-3.5" role="alert">
+                  <p className="text-sm font-semibold text-white">
+                    {categoriesUnavailable && !problem ? "Scans can't start right now" : "This photo can't be scanned"}
+                  </p>
+                  <p className="mt-1 text-sm leading-relaxed text-red-100/90">{blockingMessage}</p>
+                </div>
+              )}
 
-            <fieldset
-              className="flex flex-col gap-2"
-              disabled={pickerLocked}
-              aria-describedby="photo-check-status"
-            >
-              <legend className="mb-2 text-xs font-mono uppercase tracking-wider text-white/50">
-                What kind of object is this?
-              </legend>
-              <p className="text-xs leading-relaxed text-white/45">
-                This sets how fast rust is expected to grow, so it changes the predicted days to critical. You can correct it later from the scan's history page.
-              </p>
-              {!problem && !categoriesUnavailable && !photoPassed && (
-                <p
-                  id="photo-check-status"
-                  className="rounded-lg border px-3 py-2 text-xs leading-5 text-white/70"
-                  style={{ borderColor: "var(--color-border)" }}
-                  role="status"
-                >
-                  {photoCheck.state === "checking"
-                    ? "Checking the photo for a metal surface… The categories unlock once it passes."
-                    : photoCheck.state === "rejected"
-                      ? "This photo can't be scanned, so no category can be chosen. Choose a different photo."
-                      : "The photo could not be checked yet, so no category can be chosen."}
+              {checking && (
+                <div className="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm text-white/75" style={{ borderColor: "var(--color-border)" }} role="status">
+                  <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/25 border-t-white" aria-hidden="true" />
+                  Checking the photo for metal…
+                </div>
+              )}
+
+              {checkFailed && (
+                <div className="rounded-xl border border-red-300/40 bg-red-500/10 px-4 py-3.5" role="alert">
+                  <p className="text-sm font-semibold text-white">The photo couldn't be checked</p>
+                  <p className="mt-1 text-sm leading-relaxed text-red-100/90">
+                    {photoCheck.state === "failed" ? photoCheck.message : ""}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setCheckAttempt((attempt) => attempt + 1)}
+                    className="mt-3 rounded-lg border border-white/30 px-3 py-1.5 text-sm font-medium text-white hover:bg-white/10"
+                  >
+                    Try again
+                  </button>
+                </div>
+              )}
+
+              {ready && (
+                <p className="flex items-center gap-2 text-sm text-emerald-300" role="status">
+                  <span aria-hidden="true">✓</span> Metal detected. This photo can be scanned.
                 </p>
               )}
-              {categories.map((option) => {
-                const active = photoPassed && option.name === category
-                return (
-                  <label
-                    key={option.name}
-                    className={`flex gap-3 rounded-lg border px-3 py-2.5 transition-colors ${
-                      pickerLocked ? "cursor-not-allowed opacity-40" : "cursor-pointer"
-                    }`}
-                    style={{
-                      borderColor: active ? "#f0ede8" : "var(--color-border)",
-                      background: active ? "rgba(255,255,255,0.10)" : "transparent",
-                    }}
-                  >
+
+              {!blockingMessage && (
+                <>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-sm font-medium text-white/80">Scan name</span>
                     <input
-                      type="radio"
-                      name="asset-category"
-                      value={option.name}
-                      checked={active}
-                      onChange={() => { setCategory(option.name); setError("") }}
-                      className="mt-1 accent-red-300"
+                      value={title}
+                      onChange={(event) => { setTitle(event.target.value); setError("") }}
+                      maxLength={MAX_TITLE_LENGTH}
+                      autoFocus
+                      className="rounded-lg border bg-transparent px-3 py-2.5 text-sm text-white outline-none placeholder:text-white/30 focus:border-white/60"
+                      style={{ borderColor: "var(--color-border)" }}
+                      placeholder="e.g. Workshop wrench"
                     />
-                    <span className="min-w-0">
-                      <span className="block text-sm font-semibold text-white">{option.name}</span>
-                      <span className="block text-xs leading-5 text-white/60">{option.description}</span>
-                      <span className="block text-[11px] leading-5 text-white/40">e.g. {option.examples}</span>
-                    </span>
+                    {titleLength > MAX_TITLE_LENGTH - 20 && (
+                      <span className="text-right text-[11px] text-white/40">{titleLength}/{MAX_TITLE_LENGTH}</span>
+                    )}
                   </label>
-                )
-              })}
-            </fieldset>
 
-            {selected && (
-              <p className="rounded-lg bg-white/5 px-3 py-2 text-xs leading-5 text-white/65">
-                Scanning as <span className="font-semibold text-white">{selected.name}</span>: baseline rust growth of {selected.ratePerDay}% of the surface per day, about {selected.yearsNewToCritical} years from rust-free to critical.
-              </p>
-            )}
+                  <fieldset
+                    className={`flex flex-col gap-1.5 transition-opacity ${ready ? "" : "opacity-40"}`}
+                    disabled={!ready}
+                  >
+                    <legend className="mb-1.5 text-sm font-medium text-white/80">What kind of object is this?</legend>
+                    {categories.map((option) => {
+                      const active = ready && option.name === category
+                      return (
+                        <label
+                          key={option.name}
+                          className={`flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors ${
+                            ready ? "cursor-pointer hover:bg-white/5" : "cursor-not-allowed"
+                          }`}
+                          style={{
+                            borderColor: active ? "#f0ede8" : "var(--color-border)",
+                            background: active ? "rgba(255,255,255,0.10)" : undefined,
+                          }}
+                        >
+                          <input
+                            type="radio"
+                            name="asset-category"
+                            value={option.name}
+                            checked={active}
+                            onChange={() => { setCategory(option.name); setError("") }}
+                            className="shrink-0 accent-red-300"
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-medium text-white">{option.name}</span>
+                            <span className="block truncate text-xs text-white/45" title={option.examples}>{option.examples}</span>
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </fieldset>
 
-            <p className="text-xs leading-relaxed text-white/40">
-              For best results, make sure the metal surface fills most of the photo and is evenly lit.
-            </p>
-
-            {message && <p className="text-sm text-red-200" role="alert">{message}</p>}
-
-            {photoCheck.state === "failed" && !problem && (
-              <button
-                type="button"
-                onClick={() => setCheckAttempt((attempt) => attempt + 1)}
-                className="self-start text-sm font-medium text-white/80 underline underline-offset-2 hover:text-white"
-              >
-                Check the photo again
-              </button>
-            )}
-
-            <div className="mt-auto flex flex-col gap-2 sm:flex-row md:flex-col">
-              <button type="button" onClick={onCancel} className="rounded-lg border px-4 py-2.5 text-sm font-medium text-white/70 hover:text-white" style={{ borderColor: "var(--color-border)" }}>Cancel</button>
-              <button type="submit" disabled={blocked || !selected} className="rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40" style={{ background: "var(--color-accent)" }}>
-                {selected
-                  ? `Start scan as ${selected.name}`
-                  : photoCheck.state === "checking" && !problem
-                    ? "Checking the photo…"
-                    : photoPassed
-                      ? "Choose a category to start"
-                      : "Photo can't be scanned"}
-              </button>
+                  {selected && (
+                    <p className="rounded-lg bg-white/5 px-3 py-2.5 text-xs leading-5 text-white/65">
+                      {selected.description} Rust is assumed to grow {selected.ratePerDay}% of the surface per day, about {Math.round(selected.yearsNewToCritical)} {Math.round(selected.yearsNewToCritical) === 1 ? "year" : "years"} from rust-free to critical. You can change this later from the scan's history page.
+                    </p>
+                  )}
+                </>
+              )}
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-end gap-3 border-t px-5 py-3.5" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+            {blockingMessage ? (
+              <button type="button" onClick={onCancel} className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-all hover:brightness-110" style={{ background: "var(--color-accent)" }}>
+                Choose a different photo
+              </button>
+            ) : (
+              <>
+                {footerHint && (
+                  <p className={`mr-auto text-sm ${error ? "text-red-200" : "text-white/50"}`} role={error ? "alert" : undefined}>
+                    {footerHint}
+                  </p>
+                )}
+                <button type="button" onClick={onCancel} className="rounded-lg border px-4 py-2.5 text-sm font-medium text-white/70 hover:text-white" style={{ borderColor: "var(--color-border)" }}>Cancel</button>
+                <button type="submit" disabled={blocked || !selected} className="rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-all hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40" style={{ background: "var(--color-accent)" }}>
+                  {checking ? "Checking photo…" : "Start scan"}
+                </button>
+              </>
+            )}
           </div>
         </form>
       </div>

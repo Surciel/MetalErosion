@@ -336,13 +336,24 @@ def _next_threshold(level: int) -> Optional[float]:
     return None
 
 
+# Projections further out than this are stated as "more than 10 years". The rate behind
+# them is an assumption, so a precise far-off figure would claim accuracy it lacks.
+MAX_STATED_YEARS = 10
+
+
+def beyond_stated_range(days: int) -> bool:
+    return days > MAX_STATED_YEARS * 365
+
+
 def describe_days(days: int) -> str:
-    """A day count in words people plan with: days, then months, then years."""
+    """A day count in words people plan with: days, then months, then whole years."""
+    if beyond_stated_range(days):
+        return f"more than {MAX_STATED_YEARS} years"
     if days < 60:
         return f"about {days} day{'' if days == 1 else 's'}"
     if days < 730:
         return f"about {round(days / 30.4)} months"
-    return f"about {days / 365:.1f} years"
+    return f"about {int(days / 365 + 0.5)} years"
 
 
 def _grade_band(grade: int) -> str:
@@ -402,6 +413,12 @@ def build_decision_support(
         summary = f"Scan it again in {describe_days(rescan_in_days)}."
     elif act_within_days == 0:
         summary = "Do this now: the rust is at the edge of the next level."
+    elif beyond_stated_range(act_within_days):
+        summary = (
+            f"This is not urgent: the next level is projected to be "
+            f"{describe_days(act_within_days)} away. Scan again in "
+            f"{describe_days(rescan_in_days)} to check."
+        )
     else:
         summary = (
             f"Do this within {describe_days(act_within_days)}, and scan again in "

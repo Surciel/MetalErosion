@@ -1,12 +1,8 @@
 import { DssTooltip } from "@/components/ClassificationTooltips"
+import { describeDuration } from "@/utils/classificationInfo"
 import type { ScanResult } from "@/types"
 
-/** A day count in the words people plan with (mirrors backend/decision_support.py). */
-function describeDays(days: number): string {
-  if (days < 60) return `${days} day${days === 1 ? "" : "s"}`
-  if (days < 730) return `${Math.round(days / 30.4)} months`
-  return `${(days / 365).toFixed(1)} years`
-}
+const describeDays = (days: number): string => describeDuration(days, false)
 
 function Chip({ label, value, color }: { label: string; value: string; color?: string }) {
   return (

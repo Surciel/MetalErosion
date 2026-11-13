@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import type { ScanResult, SeverityLevel } from "@/types"
 import { SEVERITY_COLORS, severityLevel } from "@/utils/severity"
 import { isAlertMuted, playSeverityTone, setAlertMuted } from "@/utils/alertSound"
-import { distributionName } from "@/utils/classificationInfo"
+import { describeDuration, distributionName } from "@/utils/classificationInfo"
 
 const AUTO_DISMISS_MS = 8000
 
@@ -102,7 +102,7 @@ export default function SeverityAlert({ result, onClose }: SeverityAlertProps) {
           <p className="mt-3 text-xs leading-5 text-white/75">{result.dss}</p>
           {result.daysToCritical !== null && level !== "critical" && level !== "none" && (
             <p className="mt-1 text-xs text-white/45">
-              About {result.daysToCritical} days until critical at the current rate.
+              {describeDuration(result.daysToCritical).replace(/^./, (first) => first.toUpperCase())} until critical at the assumed rate.
             </p>
           )}
         </div>

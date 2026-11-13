@@ -93,6 +93,25 @@ export const QUALITY_INFO =
 /** Rust coverage at which a surface is treated as critical (start of ASTM grade 1). */
 export const CRITICAL_RUST_PERCENT = 33
 
+/**
+ * Projections further out than this are stated as "more than 10 years". The rate behind
+ * them is an assumption, so a precise far-off figure would claim accuracy it lacks.
+ */
+export const MAX_STATED_YEARS = 10
+
+/**
+ * A projected day count in words: days, then months, then whole years, capped at
+ * MAX_STATED_YEARS (mirrors describe_days in backend/decision_support.py).
+ */
+export function describeDuration(days: number, about = true): string {
+  const prefix = about ? "about " : ""
+  const whole = Math.max(0, Math.round(days))
+  if (whole > MAX_STATED_YEARS * 365) return `more than ${MAX_STATED_YEARS} years`
+  if (whole < 60) return `${prefix}${whole} day${whole === 1 ? "" : "s"}`
+  if (whole < 730) return `${prefix}${Math.round(whole / 30.4)} months`
+  return `${prefix}${Math.round(whole / 365)} years`
+}
+
 /** ASTM D610 grade for a rust percentage (mirrors backend/predictive_engine.py). */
 export function gradeForPercent(rustPercent: number): number {
   const band = ASTM_GRADES.find(
@@ -139,7 +158,7 @@ export function classificationExplanation(
   const timeline = critical
     ? "The surface is at or beyond the critical threshold (33% rust)."
     : daysToCritical !== null
-      ? `At the current corrosion rate it is projected to reach the critical threshold (33% rust) in about ${daysToCritical} days.`
+      ? `At the current corrosion rate it is projected to reach the critical threshold (33% rust) in ${describeDuration(daysToCritical)}.`
       : ""
   // How the measured spread changed the projected rate (not shown once already critical).
   const spread =
