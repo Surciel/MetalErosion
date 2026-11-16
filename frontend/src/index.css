@@ -119,6 +119,57 @@ body {
   margin: 0;
 }
 
+/* App shell: on wide screens the navigation is a sidebar that is always visible, so
+   every signed-in page is moved clear of it. */
+@media (min-width: 1024px) {
+  .app-shell > .min-h-screen {
+    padding-left: 15rem;
+  }
+}
+
+/* Keyboard focus is always visible. */
+.app-shell button:focus-visible,
+.app-shell a:focus-visible,
+.app-shell select:focus-visible,
+.app-shell input:focus-visible,
+.app-shell textarea:focus-visible,
+.app-shell [tabindex]:focus-visible {
+  outline: 2px solid #f0ede8;
+  outline-offset: 2px;
+}
+
+/* Reports print as a plain white page: no navigation, no dark background. */
+@media print {
+  @page {
+    margin: 14mm;
+  }
+  body,
+  .app-shell > .min-h-screen {
+    background: #ffffff !important;
+    padding-left: 0 !important;
+  }
+  .app-sidebar,
+  .app-header,
+  .no-print,
+  .app-shell nav[aria-label="Breadcrumb"],
+  .app-shell main > div:first-of-type {
+    display: none !important;
+  }
+  .app-shell main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+  .report-sheet {
+    max-width: none !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .report-section {
+    break-inside: avoid;
+  }
+}
+
 .history-select-wrap {
   position: relative;
   display: inline-flex;

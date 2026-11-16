@@ -9,6 +9,12 @@ import HistoryPage from "@/pages/HistoryPage"
 import HistoryDetailPage from "@/pages/HistoryDetailPage"
 import AdminPage from "@/pages/AdminPage"
 import AnalyticsPage from "@/pages/AnalyticsPage"
+import DashboardPage from "@/pages/DashboardPage"
+import SitesPage from "@/pages/SitesPage"
+import SitePage from "@/pages/SitePage"
+import AssetPage from "@/pages/AssetPage"
+import { ScanReportPage, SiteReportPage } from "@/pages/ReportPage"
+import { NavContext, type Nav } from "@/components/NavContext"
 import SeverityAlert from "@/components/SeverityAlert"
 import type { User } from "@supabase/supabase-js"
 import {
@@ -16,7 +22,7 @@ import {
   getAdminAnalytics,
   getAdminMetrics,
   getAdminRecoveryRequests,
-  getAssetCategories,
+  getScanOptions,
   getCurrentAccount,
   getScanHistory,
   deleteScanHistory,
@@ -30,7 +36,8 @@ import type {
   Account,
   AdminAnalytics,
   AdminMetrics,
-  AssetCategory,
+  ScanDetails,
+  ScanOptions,
   LoginCredentials,
   MetricRange,
   RecoveryRequest,
@@ -68,10 +75,10 @@ export default function App() {
   const [uploadedImageUrl, setUploadedImageUrl] = useState("")
   const [uploadedImageName, setUploadedImageName] = useState("")
   const [scanTitle, setScanTitle] = useState("")
-  const [scanCategory, setScanCategory] = useState("")
-  // The picker's options come from the backend, so they always match the rates it uses.
-  const [assetCategories, setAssetCategories] = useState<AssetCategory[]>([])
-  const [categoriesError, setCategoriesError] = useState("")
+  const [scanDetails, setScanDetails] = useState<ScanDetails>({ elementType: "", environment: "" })
+  // The pickers' options come from the backend, so they always match the rates it uses.
+  const [scanOptions, setScanOptions] = useState<ScanOptions>({ elementTypes: [], environments: [] })
+  const [optionsError, setOptionsError] = useState("")
   const [currentResult, setCurrentResult] = useState<ScanResult | null>(null)
   const [sessionScans, setSessionScans] = useState<ScanResult[]>([])
   const [history, setHistory] = useState<ScanResult[]>([])
@@ -79,6 +86,10 @@ export default function App() {
   const [historyError, setHistoryError] = useState("")
   const [selectedHistoryScan, setSelectedHistoryScan] =
     useState<ScanResult | null>(null)
+  // The site and asset being viewed, and where an opened scan's Back button returns.
+  const [selectedSiteId, setSelectedSiteId] = useState<string | null>(null)
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
+  const [scanBackTo, setScanBackTo] = useState<View>("history")
   // Severity pop-up for a freshly analysed scan only (never for history browsing).
   const [alertResult, setAlertResult] = useState<ScanResult | null>(null)
 
@@ -119,11 +130,11 @@ export default function App() {
 
   const loadCategories = async (accessToken: string) => {
     try {
-      setAssetCategories(await getAssetCategories(accessToken))
-      setCategoriesError("")
+      setScanOptions(await getScanOptions(accessToken))
+      setOptionsError("")
     } catch {
-      setCategoriesError(
-        "The asset categories could not be loaded, so scans cannot start. Check that the backend is running and reload the page.",
+      setOptionsError(
+        "The element types and environments could not be loaded, so scans cannot start. Check that the backend is running and reload the page.",
       )
     }
   }
@@ -222,7 +233,7 @@ export default function App() {
           void loadAdminData(session.access_token, metricRange)
         }
         if (["landing", "login", "signup", "reset-password"].includes(viewRef.current)) {
-          setView(account.role === "admin" ? "admin" : "home")
+          setView("dashboard")
         }
       }
     })
@@ -278,7 +289,7 @@ export default function App() {
 
     const account = await accountForSession(data.user, data.session?.access_token ?? "")
     setActiveAccount(account)
-    setView(account.role === "admin" ? "admin" : "home")
+    setView("dashboard")
   }
 
   const handleForgotPassword = async (email: string) => {
@@ -354,7 +365,7 @@ export default function App() {
 
     const account = await accountForSession(data.user, data.session.access_token)
     setActiveAccount(account)
-    setView(account.role === "admin" ? "admin" : "home")
+    setView("dashboard")
   }
 
   const handleLogout = async () => {
@@ -374,12 +385,12 @@ export default function App() {
     setView("landing")
   }
 
-  const handleUpload = (file: File, url: string, title: string, assetCategory: string) => {
+  const handleUpload = (file: File, url: string, title: string, details: ScanDetails) => {
     setUploadedFile(file)
     setUploadedImageUrl(url)
     setUploadedImageName(file.name)
     setScanTitle(title)
-    setScanCategory(assetCategory)
+    setScanDetails(details)
     setView("calculating")
   }
 
@@ -394,6 +405,7 @@ export default function App() {
 
   const handleSelectHistoryScan = (scan: ScanResult) => {
     setSelectedHistoryScan(scan)
+    setScanBackTo("history")
     setView("history-detail")
   }
 
@@ -435,7 +447,7 @@ export default function App() {
 
   const updateScan = async (
     scanId: string,
-    changes: { title?: string; assetCategory?: string },
+    changes: { title?: string; elementType?: string; environment?: string },
   ) => {
     const {
       data: { session },
@@ -470,8 +482,8 @@ export default function App() {
   const handleUpdateHistoryScan = (scanId: string, title: string) =>
     updateScan(scanId, { title })
 
-  const handleUpdateScanCategory = (scanId: string, assetCategory: string) =>
-    updateScan(scanId, { assetCategory })
+  const handleUpdateScanDetails = (scanId: string, details: ScanDetails) =>
+    updateScan(scanId, details)
 
   const handleAnalyticsRangeChange = async (days: number) => {
     setAnalyticsDays(days)
@@ -551,6 +563,53 @@ export default function App() {
 
   const username = activeAccount?.username ?? "User"
 
+  // A scan changed (an engineer reviewed it): show the new values everywhere it is held.
+  const handleScanUpdated = (updated: ScanResult) => {
+    const replaceScan = (scan: ScanResult) => (scan.id === updated.id ? updated : scan)
+    setHistory((current) => current.map(replaceScan))
+    setSessionScans((current) => current.map(replaceScan))
+    setSelectedHistoryScan((current) => (current ? replaceScan(current) : current))
+    setCurrentResult((current) => (current ? replaceScan(current) : current))
+  }
+
+  const nav: Nav = {
+    view,
+    navigate: setView,
+    username,
+    role: activeAccount?.role ?? "user",
+    userId: activeAccount?.id ?? "",
+    logout: () => void handleLogout(),
+    sessionExpired: handleSessionExpired,
+    openSite: (siteId) => {
+      setSelectedSiteId(siteId)
+      setView("site")
+    },
+    openAsset: (assetId) => {
+      setSelectedAssetId(assetId)
+      setView("asset")
+    },
+    openScan: (scan, backTo) => {
+      setSelectedHistoryScan(scan)
+      setScanBackTo(backTo)
+      setView("history-detail")
+    },
+    openScanReport: (scan) => {
+      setSelectedHistoryScan(scan)
+      setView("report-scan")
+    },
+    openSiteReport: (siteId) => {
+      setSelectedSiteId(siteId)
+      setView("report-site")
+    },
+    startScan: handleUpload,
+    scanUpdated: handleScanUpdated,
+    scanOptions,
+    optionsError,
+    selectedSiteId,
+    selectedAssetId,
+  }
+
+  const page = (() => {
   switch (view) {
     case "landing":
     case "login":
@@ -590,8 +649,8 @@ export default function App() {
           username={username}
           isAdmin={activeAccount?.role === "admin"}
           onUpload={handleUpload}
-          categories={assetCategories}
-          categoriesError={categoriesError}
+          scanOptions={scanOptions}
+          optionsError={optionsError}
           onNavigate={setView}
         />
       )
@@ -619,8 +678,8 @@ export default function App() {
           username={username}
           isAdmin={false}
           onUpload={handleUpload}
-          categories={assetCategories}
-          categoriesError={categoriesError}
+          scanOptions={scanOptions}
+          optionsError={optionsError}
           onNavigate={setView}
         />
       )
@@ -631,7 +690,7 @@ export default function App() {
           imageUrl={uploadedImageUrl}
           imageName={uploadedImageName}
           scanTitle={scanTitle}
-          assetCategory={scanCategory}
+          scanDetails={scanDetails}
           file={uploadedFile}
           onDone={handleCalculationDone}
           onNavigate={setView}
@@ -648,8 +707,8 @@ export default function App() {
             onNavigate={setView}
             onClose={() => setView("home")}
             onUpload={handleUpload}
-          categories={assetCategories}
-          categoriesError={categoriesError}
+          scanOptions={scanOptions}
+          optionsError={optionsError}
           />
           {alertResult && (
             <SeverityAlert
@@ -711,15 +770,39 @@ export default function App() {
           username={username}
           scan={selectedHistoryScan}
           history={history}
-          onBack={() => setView("history")}
+          onBack={() => setView(scanBackTo)}
+          backLabel={scanBackTo === "asset" ? "\u2190 Back to the asset" : "\u2190 Back to my scans"}
           onNavigate={setView}
           onDelete={handleDeleteHistoryScan}
           onEdit={handleUpdateHistoryScan}
-          categories={assetCategories}
-          onChangeCategory={handleUpdateScanCategory}
+          scanOptions={scanOptions}
+          onChangeDetails={handleUpdateScanDetails}
         />
+      ) : null
+    case "dashboard":
+      return <DashboardPage />
+    case "sites":
+      return <SitesPage />
+    case "site":
+      return <SitePage key={selectedSiteId ?? "none"} />
+    case "asset":
+      return <AssetPage key={selectedAssetId ?? "none"} />
+    case "report-site":
+      return <SiteReportPage key={selectedSiteId ?? "none"} />
+    case "report-scan":
+      return selectedHistoryScan ? (
+        <ScanReportPage scan={selectedHistoryScan} onBack={() => setView("history-detail")} />
       ) : null
     default:
       return null
   }
+  })()
+
+  // The sign-in pages stand alone; every other page sits in the app shell.
+  if (["landing", "login", "signup", "reset-password"].includes(view)) return page
+  return (
+    <NavContext.Provider value={nav}>
+      <div className="app-shell">{page}</div>
+    </NavContext.Provider>
+  )
 }

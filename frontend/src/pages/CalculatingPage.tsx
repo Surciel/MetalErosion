@@ -3,14 +3,14 @@ import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import { AnalysisRequestError, ApiError, analyzeCorrosion } from "@/services/api"
 import { supabase } from "@/services/supabase"
-import type { AnalysisErrorInfo, AnalysisPhase, ScanResult } from "@/types"
+import type { AnalysisErrorInfo, AnalysisPhase, ScanDetails, ScanResult } from "@/types"
 
 export default function CalculatingPage({
   username,
   imageUrl,
   imageName,
   scanTitle,
-  assetCategory,
+  scanDetails,
   file,
   onDone,
   onNavigate,
@@ -20,7 +20,7 @@ export default function CalculatingPage({
   imageUrl: string
   imageName: string
   scanTitle: string
-  assetCategory: string
+  scanDetails: ScanDetails
   file: File | null
   onDone: (result: ScanResult) => void
   onNavigate: (view: "home" | "landing") => void
@@ -87,7 +87,9 @@ export default function CalculatingPage({
       return analyzeCorrosion(file, imageUrl, {
         accessToken: session.access_token,
         title: scanTitle,
-        assetCategory,
+        elementType: scanDetails.elementType,
+        environment: scanDetails.environment,
+        assetId: scanDetails.assetId,
         signal: controller.signal,
       })
     }

@@ -11,13 +11,13 @@ import {
   RustPercentTooltip,
 } from "@/components/ClassificationTooltips"
 import QualityNotice from "@/components/QualityNotice"
-import AssetCategoryLine from "@/components/AssetCategoryLine"
+import ScanDetailsLine from "@/components/ScanDetailsLine"
 import DecisionSupportPanel from "@/components/DecisionSupportPanel"
 import ProjectionChart from "@/components/charts/ProjectionChart"
 import AstmScale from "@/components/charts/AstmScale"
 import { severityColor } from "@/utils/severity"
 import { distributionName } from "@/utils/classificationInfo"
-import type { AssetCategory, ScanResult, View } from "@/types"
+import type { ScanDetails, ScanOptions, ScanResult, View } from "@/types"
 
 type SeverityBadgeProps = {
   label: string
@@ -42,17 +42,17 @@ export default function ResultsPage({
   onNavigate,
   onClose,
   onUpload,
-  categories,
-  categoriesError,
+  scanOptions,
+  optionsError,
 }: {
   username: string
   result: ScanResult
   sessionScans: ScanResult[]
   onNavigate: (v: View) => void
   onClose: () => void
-  onUpload: (file: File, url: string, title: string, assetCategory: string) => void
-  categories: AssetCategory[]
-  categoriesError?: string
+  onUpload: (file: File, url: string, title: string, details: ScanDetails) => void
+  scanOptions: ScanOptions
+  optionsError?: string
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [displayed, setDisplayed] = useState<ScanResult>(result)
@@ -296,7 +296,7 @@ export default function ResultsPage({
                   Distribution: {distributionName(displayed.distributionType)}
                   <DistributionTooltip type={displayed.distributionType} align="right" />
                 </p>
-                <AssetCategoryLine scan={displayed} categories={categories} />
+                <ScanDetailsLine scan={displayed} scanOptions={scanOptions} />
                 <SeverityBadge
                   label={displayed.classificationLabel}
                   color={color}
@@ -492,18 +492,18 @@ export default function ResultsPage({
         <ScanPreparationModal
           file={pendingFile}
           sourceUrl={pendingUrl}
-          categories={categories}
-          categoriesError={categoriesError}
+          scanOptions={scanOptions}
+          optionsError={optionsError}
           onCancel={() => {
             URL.revokeObjectURL(pendingUrl)
             setPendingFile(null)
             setPendingUrl("")
           }}
-          onConfirm={(scanFile, previewUrl, title, assetCategory) => {
+          onConfirm={(scanFile, previewUrl, title, details) => {
             URL.revokeObjectURL(pendingUrl)
             setPendingFile(null)
             setPendingUrl("")
-            onUpload(scanFile, previewUrl, title, assetCategory)
+            onUpload(scanFile, previewUrl, title, details)
           }}
         />
       )}

@@ -44,11 +44,21 @@ export function distributionCounts(counts: Record<string, number>): CountDatum[]
   ]
 }
 
-/** Scans per asset category, largest first. Scans saved before categories existed are grouped. */
-export function categoryCounts(counts: Record<string, number>): CountDatum[] {
+/** Scans per named group, largest first. Scans saved before the field existed are grouped. */
+export function namedCounts(counts: Record<string, number>): CountDatum[] {
   return Object.entries(counts)
     .map(([name, value]) => ({ label: name === "not_recorded" ? "Not recorded" : name, value }))
     .sort((left, right) => right.value - left.value)
+}
+
+const ENVIRONMENT_ORDER = ["C2", "C3", "C4", "C5", "not_recorded"]
+
+/** Scans per exposure environment, in order of corrosivity (C2 to C5). */
+export function environmentCounts(counts: Record<string, number>): CountDatum[] {
+  return ENVIRONMENT_ORDER.filter((code) => code !== "not_recorded" || counts[code]).map((code) => ({
+    label: code === "not_recorded" ? "Not recorded" : code,
+    value: counts[code] ?? 0,
+  }))
 }
 
 function tally<K extends string | number>(keys: K[]): Record<K, number> {
@@ -64,7 +74,8 @@ export type ScanSummary = {
   byGrade: CountDatum[]
   byPriority: CountDatum[]
   byDistribution: CountDatum[]
-  byCategory: CountDatum[]
+  byEnvironment: CountDatum[]
+  byElement: CountDatum[]
 }
 
 export function summarizeScans(scans: ScanResult[]): ScanSummary {
@@ -77,7 +88,8 @@ export function summarizeScans(scans: ScanResult[]): ScanSummary {
     byGrade: gradeCounts(tally(scans.map((scan) => scan.astmGrade))),
     byPriority: priorityCounts(tally(scans.map((scan) => scan.priorityLevel))),
     byDistribution: distributionCounts(tally(scans.map((scan) => scan.distributionType ?? "none"))),
-    byCategory: categoryCounts(tally(scans.map((scan) => scan.assetCategory ?? "not_recorded"))),
+    byEnvironment: environmentCounts(tally(scans.map((scan) => scan.environment ?? "not_recorded"))),
+    byElement: namedCounts(tally(scans.map((scan) => scan.elementType ?? "not_recorded"))),
   }
 }
 

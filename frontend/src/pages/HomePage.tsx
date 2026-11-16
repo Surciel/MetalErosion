@@ -3,21 +3,21 @@ import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import PageGrid from "@/components/PageGrid"
 import ScanPreparationModal from "@/components/ScanPreparationModal"
-import type { AssetCategory, View } from "@/types"
+import type { ScanDetails, ScanOptions, View } from "@/types"
 
 export default function HomePage({
   username,
   isAdmin = false,
   onUpload,
-  categories,
-  categoriesError,
+  scanOptions,
+  optionsError,
   onNavigate,
 }: {
   username: string
   isAdmin?: boolean
-  onUpload: (file: File, url: string, title: string, assetCategory: string) => void
-  categories: AssetCategory[]
-  categoriesError?: string
+  onUpload: (file: File, url: string, title: string, details: ScanDetails) => void
+  scanOptions: ScanOptions
+  optionsError?: string
   onNavigate: (v: View) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -114,10 +114,11 @@ export default function HomePage({
               </div>
               <div>
                 <p className="font-semibold text-white text-base leading-snug">
-                  Drop your rust image here to calculate
+                  Drop a photo of the steel element here
                 </p>
-                <p className="text-white/50 text-xs mt-1">
-                  percentage and classification
+                <p className="text-white/50 text-xs mt-1 max-w-sm mx-auto leading-relaxed">
+                  Even light, in focus, with the steel filling most of the
+                  frame. You choose the asset it belongs to next.
                 </p>
               </div>
               <span
@@ -143,18 +144,18 @@ export default function HomePage({
         <ScanPreparationModal
           file={pendingFile}
           sourceUrl={pendingUrl}
-          categories={categories}
-          categoriesError={categoriesError}
+          scanOptions={scanOptions}
+          optionsError={optionsError}
           onCancel={() => {
             URL.revokeObjectURL(pendingUrl)
             setPendingFile(null)
             setPendingUrl("")
           }}
-          onConfirm={(scanFile, previewUrl, title, assetCategory) => {
+          onConfirm={(scanFile, previewUrl, title, details) => {
             URL.revokeObjectURL(pendingUrl)
             setPendingFile(null)
             setPendingUrl("")
-            onUpload(scanFile, previewUrl, title, assetCategory)
+            onUpload(scanFile, previewUrl, title, details)
           }}
         />
       )}

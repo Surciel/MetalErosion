@@ -135,12 +135,21 @@ export default function AnalyticsPage({
           </ChartCard>
 
           <ChartCard
-            title="Scans by asset category"
-            subtitle="The kind of object chosen for each scan. It sets the baseline corrosion rate."
-            table={toTable("Asset category", "Scans", summary.byCategory)}
+            title="Scans by exposure environment"
+            subtitle="ISO 12944 corrosivity category of each scanned element, from C2 (low) to C5 (very high). It sets the baseline corrosion rate."
+            table={toTable("Environment", "Scans", summary.byEnvironment)}
             empty={emptyText}
           >
-            <CountBarChart data={summary.byCategory} direction="bars" unit="scans" />
+            <CountBarChart data={summary.byEnvironment} direction="columns" unit="scans" />
+          </ChartCard>
+
+          <ChartCard
+            title="Scans by element type"
+            subtitle="The kind of steel element scanned."
+            table={toTable("Element type", "Scans", summary.byElement)}
+            empty={emptyText}
+          >
+            <CountBarChart data={summary.byElement} direction="bars" unit="scans" />
           </ChartCard>
         </div>
       </main>

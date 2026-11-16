@@ -60,16 +60,17 @@ export default function LandingPage({
           <div className="flex flex-col gap-6" style={{ gridColumn: "1 / 6" }}>
             <div>
               <h1 className="text-4xl font-bold text-white leading-tight">
-                Detect Rust.
+                Grade Rust.
                 <br />
                 <span style={{ color: "var(--color-muted)" }}>
-                  Before It Spreads.
+                  Plan the Repair.
                 </span>
               </h1>
               <p className="mt-4 text-white/60 text-sm leading-relaxed">
-                Upload any image of a metal surface and get an instant rust
-                percentage score, severity classification, and a repair
-                recommendation — powered by machine learning.
+                For maintenance engineers and inspectors of painted steel.
+                Photograph a steel element and get its rusted area, ASTM
+                D610 grade, and the maintenance painting strategy to plan
+                for it.
               </p>
             </div>
 

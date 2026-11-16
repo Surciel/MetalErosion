@@ -3,7 +3,7 @@ from typing import Optional
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
-from asset_categories import CATEGORY_RATES, UNMAPPED_RATE_PER_DAY
+from asset_profile import BASELINE_RATES, LEGACY_CATEGORY_RATES, LEGACY_DEFAULT_CATEGORY
 
 # ASTM D610 rust grade scale: (maximum rusted surface %, grade, remediation protocol).
 ASTM_D610_SCALE = [
@@ -44,9 +44,10 @@ def spread_factor(coverage_ratio: Optional[float]) -> float:
 
 class ISOPredictiveEngine:
     def __init__(self):
-        # 1. Baseline slope per asset category (% rust per day). The values, what they
-        #    are based on and the published evidence are defined in asset_categories.py.
-        self.category_slopes = dict(CATEGORY_RATES)
+        # 1. Baseline slope per exposure environment (% rust per day), plus the object
+        #    categories of scans saved before environments existed. The values, what
+        #    they are based on and the published evidence are defined in asset_profile.py.
+        self.category_slopes = dict(BASELINE_RATES)
 
         self.trained_models = {}
 
@@ -88,12 +89,18 @@ class ISOPredictiveEngine:
         coverage_ratio: Optional[float] = None,
     ):
         """
-        Receives the segmentation rust percentage, the UI category, the geometric
+        Receives the segmentation rust percentage, the rate key (an exposure
+        environment code such as "C3", or a legacy object category), the geometric
         distribution type (S/G/P/H) and the measured spread (share of the surface grid
         containing rust), returning the DSS payload.
         """
-        # Fetch the specific slope (the unmapped fallback rate if the category has none)
-        base_slope = float(self.trained_models.get(asset_category, UNMAPPED_RATE_PER_DAY))
+        # Fetch the specific slope. The API validates the key, so an unknown one can
+        # only come from old data; it gets the legacy default rate.
+        base_slope = float(
+            self.trained_models.get(
+                asset_category, LEGACY_CATEGORY_RATES[LEGACY_DEFAULT_CATEGORY]
+            )
+        )
 
         # The measured spread scales the slope. A surface with no rust has no spread to
         # measure, and scans saved before the spread was stored have none either: both

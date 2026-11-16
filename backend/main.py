@@ -26,7 +26,14 @@ from image_quality import (
     assess_sharpness,
     detect_image_format,
 )
-from asset_categories import CATEGORY_NAMES, LEGACY_CATEGORY, category_payload
+from asset_profile import (
+    ELEMENT_NAMES,
+    ENVIRONMENT_CODES,
+    LEGACY_CATEGORY_RATES,
+    LEGACY_DEFAULT_CATEGORY,
+    scan_options_payload,
+)
+import inventory
 from decision_support import build_decision_support
 from predictive_engine import ISOPredictiveEngine
 from rust_measurement import colour_rust_mask, rust_patch_boxes
@@ -180,7 +187,7 @@ def passes_metal_classifier(image: np.ndarray) -> bool:
 
 class MaintenanceRequest(BaseModel):
     rust_percentage: float = Field(ge=0, le=100)
-    asset_category: str = "Hardware"
+    environment: str
 
 
 class AccountUpdate(BaseModel):
@@ -197,19 +204,51 @@ class ScanUpdate(BaseModel):
     """Fields of a saved scan the owner may change. At least one must be given."""
 
     title: Optional[str] = Field(default=None, min_length=1, max_length=120)
-    asset_category: Optional[str] = None
+    element_type: Optional[str] = None
+    environment: Optional[str] = None
 
 
-def _category_error() -> HTTPException:
+def _scan_details_error(message: str) -> HTTPException:
     return HTTPException(
         status_code=400,
-        detail={
-            "code": "category_required",
-            "message": "Choose the kind of object being scanned: "
-            + ", ".join(CATEGORY_NAMES)
-            + ".",
-        },
+        detail={"code": "scan_details_required", "message": message},
     )
+
+
+def _checked_element_type(value: str) -> str:
+    """The element type exactly as defined; anything else is refused."""
+    value = value.strip()
+    if value not in ELEMENT_NAMES:
+        raise _scan_details_error(
+            "Choose the type of steel element: " + ", ".join(ELEMENT_NAMES) + "."
+        )
+    return value
+
+
+def _checked_environment(value: str) -> str:
+    """The exposure environment code exactly as defined; anything else is refused."""
+    value = value.strip()
+    if value not in ENVIRONMENT_CODES:
+        raise _scan_details_error(
+            "Choose the exposure environment: " + ", ".join(ENVIRONMENT_CODES) + "."
+        )
+    return value
+
+
+def _scan_profile(scan: dict[str, Any]) -> tuple[Optional[str], Optional[str], Optional[str], str]:
+    """(element type, environment, legacy category, rate key) of a stored scan.
+
+    Scans saved before element types and environments existed carry an object
+    category, or nothing; they keep the rate they were analysed with.
+    """
+    stored_element = scan.get("element_type")
+    stored_environment = scan.get("environment")
+    stored_category = scan.get("asset_category")
+    element_type = stored_element if stored_element in ELEMENT_NAMES else None
+    environment = stored_environment if stored_environment in ENVIRONMENT_CODES else None
+    legacy_category = stored_category if stored_category in LEGACY_CATEGORY_RATES else None
+    rate_key = environment or legacy_category or LEGACY_DEFAULT_CATEGORY
+    return element_type, environment, legacy_category, rate_key
 
 
 def _authorization_token(authorization: Optional[str]) -> str:
@@ -239,8 +278,14 @@ def current_user(
     authorization: Optional[str] = Header(default=None),
 ) -> dict[str, Any]:
     user = _get_user(authorization)
-    _ensure_profile(user)
-    return user
+    profile = _ensure_profile(user)
+    # Roles: "user" (an inspector), "engineer" and "admin". The stored name "user" is
+    # kept so that existing accounts and the sign-up trigger need no change.
+    return {
+        **user,
+        "role": profile.get("role") or "user",
+        "username": profile.get("username"),
+    }
 
 
 def _profile(user_id: str) -> dict[str, Any]:
@@ -254,9 +299,11 @@ def _profile(user_id: str) -> dict[str, Any]:
     return getattr(response, "data", None) or {}
 
 
-def _ensure_profile(user: dict[str, Any]) -> None:
-    if _profile(user["id"]):
-        return
+def _ensure_profile(user: dict[str, Any]) -> dict[str, Any]:
+    """The user's profile, created on first sight."""
+    profile = _profile(user["id"])
+    if profile:
+        return profile
 
     email = user.get("email") or ""
     username = email.split("@", 1)[0].strip() or f"user-{user['id'][:8]}"
@@ -275,13 +322,13 @@ def _ensure_profile(user: dict[str, Any]) -> None:
             status_code=502,
             detail="The authenticated user profile could not be initialized.",
         ) from exc
+    return {"id": user["id"], "role": "user", "email": email, "username": username}
 
 
 def admin_user(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
-    profile = _profile(user["id"])
-    if profile.get("role") != "admin":
+    if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access is required.")
-    return {**user, "profile": profile}
+    return user
 
 
 def _scan_response(
@@ -298,7 +345,12 @@ def _scan_response(
     title: Optional[str] = None,
     lighting_status: Optional[str] = None,
     quality_warnings: Optional[list[str]] = None,
-    asset_category: Optional[str] = None,
+    element_type: Optional[str] = None,
+    environment: Optional[str] = None,
+    legacy_category: Optional[str] = None,
+    asset: Optional[dict[str, Any]] = None,
+    review: Optional[dict[str, Any]] = None,
+    inspector_name: Optional[str] = None,
 ) -> dict[str, Any]:
     # The maintenance answer is built from the scan's own values every time, so scans
     # saved before this existed get it too and nothing extra is stored.
@@ -306,7 +358,9 @@ def _scan_response(
         rust_percentage=rust_percentage,
         astm_grade=report["astm_grade"],
         distribution_type=report["distribution_type"],
-        asset_category=asset_category,
+        element_type=element_type,
+        environment=environment,
+        legacy_category=legacy_category,
         days_to_critical=report["days_to_critical"],
         active_slope=report["active_slope_exact"],
         priority_tier=report["priority_tier"],
@@ -326,9 +380,12 @@ def _scan_response(
         "spread_coverage": report["spread_coverage"],
         "spread_factor": report["spread_factor"],
         "regression_slope": report["active_regression_slope"],
-        # None for scans saved before a category was recorded (the Hardware rate is used).
-        "asset_category": asset_category,
-        "category_rate": report["base_regression_slope"],
+        # Both are None for scans saved before they were recorded; such a scan may
+        # carry the object category it was analysed with instead.
+        "element_type": element_type,
+        "environment": environment,
+        "legacy_category": legacy_category,
+        "baseline_rate": report["base_regression_slope"],
         "priority_level": report["priority_tier"],
         # One-line form of the answer, for the alert pop-up, the info page and search.
         "recommendation": f"{decision['headline']} {decision['summary']}",
@@ -336,6 +393,13 @@ def _scan_response(
         "lighting_status": lighting_status,
         "quality_warnings": list(quality_warnings or []),
         "box_coordinates": box_coordinates,
+        # The steel element this scan belongs to; None for a scan with no asset.
+        "asset": asset,
+        # An engineer's confirmation or correction; None while unreviewed. When a scan
+        # was corrected, rust_percentage above is the engineer's value and the
+        # review carries what the AI measured.
+        "review": review,
+        "inspector_name": inspector_name,
         "scan_id": str(scan_id) if scan_id is not None else None,
         "created_at": created_at,
         "user_id": user_id,
@@ -595,19 +659,42 @@ def _segment_surface(image: np.ndarray) -> SurfaceSegmentation:
     )
 
 
+def _scan_review(scan: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """The engineer's review of a stored scan, or None while it is unreviewed."""
+    status = scan.get("review_status")
+    if status not in ("confirmed", "corrected"):
+        return None
+    ai_rust = float(scan["rust_percentage"])
+    return {
+        "status": status,
+        "by": scan.get("reviewed_by"),
+        "by_name": scan.get("reviewed_by_name"),
+        "at": scan.get("reviewed_at"),
+        "note": scan.get("review_note"),
+        "ai_rust_percentage": ai_rust,
+        "ai_distribution_type": scan.get("distribution_type"),
+        "ai_astm_grade": prediction_engine.astm_grade(ai_rust)[0],
+    }
+
+
 def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
-    rust_percentage = float(scan["rust_percentage"])
+    # An engineer's correction replaces the AI's values everywhere a result is shown
+    # or counted; the AI's own values stay in the row and in the review.
+    rust_percentage = inventory.effective_rust(scan)
+    corrected = scan.get("reviewed_rust_percentage") is not None
+    distribution_type = scan.get("distribution_type")
+    if corrected:
+        distribution_type = scan.get("reviewed_distribution") or distribution_type
+        if rust_percentage <= 0:
+            distribution_type = None
     # Scans saved before migrations 002/003 have no distribution, lighting or spread
     # columns; a missing spread keeps the category slope unchanged.
     spread_coverage = scan.get("spread_coverage")
-    # Scans saved before migration 004 have no category; they keep the rate they were
-    # analysed with (Hardware) and report the category as not recorded.
-    stored_category = scan.get("asset_category")
-    asset_category = stored_category if stored_category in CATEGORY_NAMES else None
+    element_type, environment, legacy_category, rate_key = _scan_profile(scan)
     report = prediction_engine.analyze_scan(
         rust_percentage,
-        asset_category or LEGACY_CATEGORY,
-        scan.get("distribution_type"),
+        rate_key,
+        distribution_type,
         float(spread_coverage) if spread_coverage is not None else None,
     )
     image_url = str(scan["image_url"])
@@ -624,8 +711,42 @@ def _history_scan_response(scan: dict[str, Any]) -> dict[str, Any]:
         title=scan.get("title") or filename,
         lighting_status=scan.get("lighting_status"),
         quality_warnings=scan.get("quality_warnings"),
-        asset_category=asset_category,
+        element_type=element_type,
+        environment=environment,
+        legacy_category=legacy_category,
+        asset=scan.get("_asset"),
+        review=_scan_review(scan),
+        inspector_name=scan.get("inspector_name"),
     )
+
+
+def _attach_assets(scans: list[dict[str, Any]]) -> None:
+    """Give each stored scan the short reference of the asset it belongs to, in place."""
+    references = inventory.asset_refs(supabase, [scan.get("asset_id") for scan in scans])
+    for scan in scans:
+        scan["_asset"] = references.get(scan.get("asset_id"))
+
+
+def _stored_scan(scan_id: UUID) -> dict[str, Any]:
+    existing = (
+        supabase.table("scans")
+        .select("*")  # "*" also returns the optional migration columns when present
+        .eq("id", str(scan_id))
+        .maybe_single()
+        .execute()
+    )
+    scan = getattr(existing, "data", None)
+    if not scan:
+        raise HTTPException(status_code=404, detail="Scan history was not found.")
+    return scan
+
+
+def _editable_scan(scan_id: UUID, user: dict[str, Any]) -> dict[str, Any]:
+    """A scan this user may change: their own, or any scan for an engineer or admin."""
+    scan = _stored_scan(scan_id)
+    if scan.get("user_id") != user["id"] and not inventory.is_manager(user):
+        raise HTTPException(status_code=404, detail="Scan history was not found.")
+    return scan
 
 
 _SIGNED_OBJECT_PATH = re.compile(r"/object/sign/([^/?]+)/([^?]+)")
@@ -669,14 +790,18 @@ def _refresh_image_urls(scans: list[dict[str, Any]]) -> None:
 
 
 # Columns added by migrations 002 (distribution, lighting), 003 (analytics fields) and
-# 004 (asset category).
+# 006 (element type and exposure environment).
 SCAN_ANALYSIS_COLUMNS = (
     "distribution_type",
     "lighting_status",
     "days_to_critical",
     "spread_coverage",
     "quality_warnings",
-    "asset_category",
+    "element_type",
+    "environment",
+    "asset_id",
+    "rust_method",
+    "inspector_name",
 )
 
 
@@ -868,7 +993,9 @@ def check_image(
 @app.post("/analyze-corrosion")
 def analyze_corrosion(
     file: UploadFile = File(...),
-    asset_category: str = Form(""),
+    element_type: str = Form(""),
+    environment: str = Form(""),
+    asset_id: str = Form(""),
     title: str = Form(""),
     submitted_user_id: Optional[str] = Form(default=None),
     user: dict[str, Any] = Depends(current_user),
@@ -885,11 +1012,24 @@ def analyze_corrosion(
         raise HTTPException(status_code=400, detail="A scan title is required.")
     if len(normalized_title) > 120:
         raise HTTPException(status_code=400, detail="Scan titles must be 120 characters or fewer.")
-    # The category sets the baseline corrosion rate, so it must be chosen explicitly:
-    # there is no default, and anything outside the defined list is refused.
-    asset_category = asset_category.strip()
-    if asset_category not in CATEGORY_NAMES:
-        raise _category_error()
+    # The environment sets the baseline corrosion rate and the element type sets the
+    # checks in the answer, so both must be chosen explicitly: there is no default,
+    # and anything outside the defined lists is refused.
+    # A scan of an asset takes the element type from the asset and the environment
+    # from its site, so they are entered once and cannot drift between inspections.
+    asset_reference = None
+    asset_id = asset_id.strip()
+    if asset_id:
+        try:
+            UUID(asset_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="The asset could not be identified.") from exc
+        asset_row, site_row = inventory.find_asset(supabase, asset_id)
+        element_type = asset_row.get("element_type") or ""
+        environment = site_row.get("environment") or ""
+        asset_reference = inventory.asset_reference(asset_row, site_row.get("name"))
+    element_type = _checked_element_type(element_type)
+    environment = _checked_environment(environment)
 
     # The photo checks run again here, so a skipped pre-check never lets a
     # non-metal photo through.
@@ -908,7 +1048,7 @@ def analyze_corrosion(
         segmentation.measured_rust_mask, segmentation.surface_mask
     )
     report = prediction_engine.analyze_scan(
-        rust_percentage, asset_category, distribution["type"], distribution["coverage_ratio"]
+        rust_percentage, environment, distribution["type"], distribution["coverage_ratio"]
     )
     logger.info(
         "Scan analysed: rust=%.2f%% rating=%s slope=%s (spread x%s) days=%s lighting=%s "
@@ -953,8 +1093,14 @@ def analyze_corrosion(
         "days_to_critical": report["days_to_critical"],
         "spread_coverage": report["spread_coverage"],
         "quality_warnings": quality_warnings,
-        "asset_category": asset_category,
+        "element_type": element_type,
+        "environment": environment,
+        # Recorded so that a trend is only fitted across scans measured the same way.
+        "rust_method": RUST_MEASUREMENT,
+        "inspector_name": user.get("username") or user.get("email"),
     }
+    if asset_id:
+        supabase_payload["asset_id"] = asset_id
     try:
         inserted = _insert_scan(supabase_payload)
     except Exception as exc:
@@ -984,7 +1130,10 @@ def analyze_corrosion(
         title=normalized_title,
         lighting_status=lighting.status,
         quality_warnings=quality_warnings,
-        asset_category=asset_category,
+        element_type=element_type,
+        environment=environment,
+        asset=asset_reference,
+        inspector_name=supabase_payload["inspector_name"],
     )
 
 @app.get("/history")
@@ -998,6 +1147,7 @@ def history(user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]
     )
     scans = list(response.data or [])
     _refresh_image_urls(scans)
+    _attach_assets(scans)
     return [_history_scan_response(scan) for scan in scans]
 
 
@@ -1013,31 +1163,27 @@ def update_history_scan(
         if not title:
             raise HTTPException(status_code=400, detail="A scan title is required.")
         updates["title"] = title
-    if changes.asset_category is not None:
-        if changes.asset_category not in CATEGORY_NAMES:
-            raise _category_error()
-        updates["asset_category"] = changes.asset_category
+    if changes.element_type is not None:
+        updates["element_type"] = _checked_element_type(changes.element_type)
+    if changes.environment is not None:
+        updates["environment"] = _checked_environment(changes.environment)
     if not updates:
         raise HTTPException(status_code=400, detail="Nothing to update.")
 
-    existing = (
-        supabase.table("scans")
-        .select("*")  # "*" also returns the optional migration columns when present
-        .eq("id", str(scan_id))
-        .eq("user_id", user["id"])
-        .maybe_single()
-        .execute()
-    )
-    scan = existing.data
-    if not scan:
-        raise HTTPException(status_code=404, detail="Scan history was not found.")
+    scan = _editable_scan(scan_id, user)
+    if scan.get("asset_id") and ("element_type" in updates or "environment" in updates):
+        raise HTTPException(
+            status_code=409,
+            detail="This scan belongs to an asset. Its element type comes from the asset "
+            "and its environment from the site; change them there.",
+        )
 
-    if "asset_category" in updates:
-        # The category changes the corrosion rate, so the stored prediction is redone.
+    if "environment" in updates:
+        # The environment changes the corrosion rate, so the stored prediction is redone.
         coverage = scan.get("spread_coverage")
         report = prediction_engine.analyze_scan(
             float(scan["rust_percentage"]),
-            updates["asset_category"],
+            updates["environment"],
             scan.get("distribution_type"),
             float(coverage) if coverage is not None else None,
         )
@@ -1048,7 +1194,6 @@ def update_history_scan(
             supabase.table("scans")
             .update(fields)
             .eq("id", str(scan_id))
-            .eq("user_id", user["id"])
             .execute()
         )
 
@@ -1056,11 +1201,11 @@ def update_history_scan(
         updated = _save(updates)
     except Exception as exc:
         message = str(exc)
-        if "asset_category" in updates and "asset_category" in message:
+        if any(column in updates and column in message for column in ("element_type", "environment")):
             raise HTTPException(
                 status_code=409,
-                detail="The asset category cannot be saved yet. Run "
-                "backend/migrations/004_asset_category.sql in Supabase.",
+                detail="The element type and environment cannot be saved yet. Run "
+                "backend/migrations/006_element_and_environment.sql in Supabase.",
             ) from exc
         if "days_to_critical" in updates and "days_to_critical" in message:
             # Migration 002 has not been run: save without the stored prediction.
@@ -1078,13 +1223,14 @@ def update_history_scan(
 
     updated_scan = {**scan, **(updated.data[0] if updated.data else {}), **updates}
     _refresh_image_urls([updated_scan])
+    _attach_assets([updated_scan])
     return _history_scan_response(updated_scan)
 
 
-@app.get("/asset-categories")
-def asset_categories(_user: dict[str, Any] = Depends(current_user)) -> list[dict[str, Any]]:
-    """The asset categories with their rates and supporting evidence, for the picker."""
-    return category_payload()
+@app.get("/scan-options")
+def scan_options(_user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    """The element types and exposure environments, with rates and evidence, for the pickers."""
+    return scan_options_payload()
 
 
 @app.get("/me")
@@ -1106,22 +1252,10 @@ def delete_history_scan(
     scan_id: UUID,
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
-    existing = (
-        supabase.table("scans")
-        .select("id,image_url")
-        .eq("id", str(scan_id))
-        .eq("user_id", user["id"])
-        .maybe_single()
-        .execute()
-    )
-    scan = existing.data
-    if not scan:
-        raise HTTPException(status_code=404, detail="Scan history was not found.")
+    scan = _editable_scan(scan_id, user)
 
     try:
-        supabase.table("scans").delete().eq("id", str(scan_id)).eq(
-            "user_id", user["id"]
-        ).execute()
+        supabase.table("scans").delete().eq("id", str(scan_id)).execute()
     except Exception as exc:
         logger.exception("Scan history deletion failed")
         raise HTTPException(
@@ -1133,7 +1267,7 @@ def delete_history_scan(
     # files inside the owner's own folder are removed; a failure here does not undo the
     # deletion of the record.
     storage_path = _storage_path(scan.get("image_url"))
-    if storage_path and storage_path.startswith(f"scans/{user['id']}/"):
+    if storage_path and storage_path.startswith(f"scans/{scan.get('user_id')}/"):
         try:
             supabase.storage.from_(SUPABASE_STORAGE_BUCKET).remove([storage_path])
         except Exception:
@@ -1147,15 +1281,8 @@ def predict_maintenance(
     request: MaintenanceRequest,
     _user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
-    if request.asset_category not in prediction_engine.category_slopes:
-        raise HTTPException(
-            status_code=400,
-            detail="Unknown asset category. Use one of: "
-            + ", ".join(prediction_engine.category_slopes)
-            + ".",
-        )
     return prediction_engine.analyze_scan(
-        request.rust_percentage, request.asset_category
+        request.rust_percentage, _checked_environment(request.environment)
     )
 
 
@@ -1186,8 +1313,8 @@ def update_admin_account(
     updates = changes.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=400, detail="At least one account field is required.")
-    if updates.get("role") not in (None, "user", "admin"):
-        raise HTTPException(status_code=400, detail="Role must be user or admin.")
+    if updates.get("role") not in (None, "user", "engineer", "admin"):
+        raise HTTPException(status_code=400, detail="Role must be user (inspector), engineer or admin.")
     response = (
         supabase.table("profiles")
         .update(updates)
@@ -1285,7 +1412,8 @@ def admin_analytics(
     by_priority: dict[str, int] = {}
     by_distribution: dict[str, int] = {}
     by_lighting: dict[str, int] = {}
-    by_category: dict[str, int] = {}
+    by_environment: dict[str, int] = {}
+    by_element: dict[str, int] = {}
     for scan in scans:
         created = _parse_timestamp(scan.get("created_at"))
         if created is not None:
@@ -1293,11 +1421,10 @@ def admin_analytics(
             if day in per_day:
                 per_day[day] += 1
         coverage = scan.get("spread_coverage")
-        stored_category = scan.get("asset_category")
-        category = stored_category if stored_category in CATEGORY_NAMES else None
+        element_type, environment, _legacy_category, rate_key = _scan_profile(scan)
         report = prediction_engine.analyze_scan(
             float(scan["rust_percentage"]),
-            category or LEGACY_CATEGORY,
+            rate_key,
             scan.get("distribution_type"),
             float(coverage) if coverage is not None else None,
         )
@@ -1306,7 +1433,9 @@ def admin_analytics(
             (by_priority, report["priority_tier"]),
             (by_distribution, scan.get("distribution_type") or "none"),
             (by_lighting, scan.get("lighting_status") or "unknown"),
-            (by_category, category or "not_recorded"),
+            # Scans saved before environments and element types existed are grouped.
+            (by_environment, environment or "not_recorded"),
+            (by_element, element_type or "not_recorded"),
         ):
             counts[key] = counts.get(key, 0) + 1
 
@@ -1336,7 +1465,8 @@ def admin_analytics(
         "by_priority": by_priority,
         "by_distribution": by_distribution,
         "by_lighting": by_lighting,
-        "by_category": by_category,
+        "by_environment": by_environment,
+        "by_element": by_element,
         "rejections": rejections,
         "rejections_available": rejections_available,
     }
@@ -1378,6 +1508,141 @@ def update_recovery_request(
     if not response.data:
         raise HTTPException(status_code=404, detail="Recovery request not found.")
     return response.data[0]
+
+
+REVIEW_MIGRATION_HINT = "Run backend/migrations/008_review_and_roles.sql in Supabase."
+
+
+class ScanReview(BaseModel):
+    """An engineer's verdict on a scan: confirm the AI's reading, or correct it."""
+
+    action: str = Field(pattern="^(confirm|correct)$")
+    rust_percentage: Optional[float] = Field(default=None, ge=0, le=100)
+    distribution_type: Optional[str] = Field(default=None, pattern="^(S|G|P|H)$")
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+def _require_engineer(user: dict[str, Any]) -> None:
+    if not inventory.is_manager(user):
+        raise HTTPException(
+            status_code=403, detail="Only an engineer or an admin can review a scan."
+        )
+
+
+def _save_review(scan_id: UUID, scan: dict[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
+    try:
+        updated = supabase.table("scans").update(fields).eq("id", str(scan_id)).execute()
+    except Exception as exc:
+        if "review" in str(exc):
+            raise HTTPException(
+                status_code=409,
+                detail="Reviews cannot be saved yet. " + REVIEW_MIGRATION_HINT,
+            ) from exc
+        logger.exception("Scan review failed")
+        raise HTTPException(status_code=502, detail="The review could not be saved.") from exc
+    merged = {**scan, **(updated.data[0] if updated.data else {}), **fields}
+    _refresh_image_urls([merged])
+    _attach_assets([merged])
+    return _history_scan_response(merged)
+
+
+@app.post("/history/{scan_id}/review")
+def review_scan(
+    scan_id: UUID,
+    review: ScanReview,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    """The AI proposes, the engineer decides. A correction replaces the AI's rust % (and
+    distribution) wherever the result is shown or counted; the AI's values are kept."""
+    _require_engineer(user)
+    scan = _stored_scan(scan_id)
+    correcting = review.action == "correct"
+    note = (review.note or "").strip() or None
+    if correcting and review.rust_percentage is None:
+        raise HTTPException(status_code=400, detail="Enter the corrected rust percentage.")
+    if correcting and not note:
+        raise HTTPException(
+            status_code=400, detail="Add a short note saying why the reading was corrected."
+        )
+    fields = {
+        "review_status": "corrected" if correcting else "confirmed",
+        "reviewed_rust_percentage": round(review.rust_percentage, 2) if correcting else None,
+        "reviewed_distribution": review.distribution_type if correcting else None,
+        "reviewed_by": user["id"],
+        "reviewed_by_name": user.get("username") or user.get("email"),
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        "review_note": note,
+    }
+    return _save_review(scan_id, scan, fields)
+
+
+@app.delete("/history/{scan_id}/review")
+def clear_scan_review(
+    scan_id: UUID,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    """Withdraw a review; the scan goes back to the AI's values and counts as unreviewed."""
+    _require_engineer(user)
+    scan = _stored_scan(scan_id)
+    fields = {
+        "review_status": None,
+        "reviewed_rust_percentage": None,
+        "reviewed_distribution": None,
+        "reviewed_by": None,
+        "reviewed_by_name": None,
+        "reviewed_at": None,
+        "review_note": None,
+    }
+    return _save_review(scan_id, scan, fields)
+
+
+@app.get("/review-agreement")
+def review_agreement(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    """How often the AI's ASTM grade matched the engineer's, over every reviewed scan.
+
+    A confirmed scan counts as the same grade. This is the system's own running record
+    of expert agreement, separate from the test-set figures in the paper.
+    """
+    _require_engineer(user)
+    try:
+        rows = (
+            supabase.table("scans")
+            .select("rust_percentage,reviewed_rust_percentage,review_status")
+            .in_("review_status", ["confirmed", "corrected"])
+            .limit(5000)
+            .execute()
+        ).data or []
+    except Exception:
+        return {"available": False, "reviewed": 0, "exact": 0, "within_one": 0, "pairs": []}
+    pairs: dict[tuple[int, int], int] = {}
+    exact = within_one = 0
+    for row in rows:
+        ai_grade = prediction_engine.astm_grade(float(row["rust_percentage"]))[0]
+        engineer_grade = prediction_engine.astm_grade(inventory.effective_rust(row))[0]
+        pairs[(ai_grade, engineer_grade)] = pairs.get((ai_grade, engineer_grade), 0) + 1
+        exact += ai_grade == engineer_grade
+        within_one += abs(ai_grade - engineer_grade) <= 1
+    return {
+        "available": True,
+        "reviewed": len(rows),
+        "confirmed": sum(1 for row in rows if row.get("review_status") == "confirmed"),
+        "corrected": sum(1 for row in rows if row.get("review_status") == "corrected"),
+        "exact": exact,
+        "within_one": within_one,
+        "pairs": [
+            {"ai_grade": ai, "engineer_grade": engineer, "count": count}
+            for (ai, engineer), count in sorted(pairs.items(), reverse=True)
+        ],
+    }
+
+
+inventory.register(
+    app,
+    db=lambda: supabase,
+    current_user=current_user,
+    history_response=_history_scan_response,
+    refresh_image_urls=_refresh_image_urls,
+)
 
 
 if __name__ == "__main__":

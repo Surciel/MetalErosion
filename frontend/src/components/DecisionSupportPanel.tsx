@@ -56,6 +56,11 @@ export default function DecisionSupportPanel({
           {/* What to do, and by when */}
           <div className="flex flex-col gap-3">
             <p className="text-xl font-semibold leading-snug text-white">{answer.headline}</p>
+            {answer.surfacePreparation && answer.level > 1 && (
+              <p className="text-sm text-white/65">
+                Surface preparation: <span className="text-white/90">{answer.surfacePreparation}</span>
+              </p>
+            )}
             <div className="flex flex-wrap gap-2">
               {answer.level === 6 && <Chip label="Act" value="now" color={color} />}
               {answer.actWithinDays !== null && (
@@ -66,7 +71,7 @@ export default function DecisionSupportPanel({
                 />
               )}
               {answer.rescanInDays !== null && (
-                <Chip label="Scan again in" value={describeDays(answer.rescanInDays)} />
+                <Chip label="Inspect again in" value={describeDays(answer.rescanInDays)} />
               )}
               {answer.confidence === "reduced" && (
                 <Chip label="Confidence" value="reduced by photo quality" color="#fbbf24" />

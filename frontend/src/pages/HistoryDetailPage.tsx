@@ -9,13 +9,15 @@ import {
   RustPercentTooltip,
 } from "@/components/ClassificationTooltips"
 import QualityNotice from "@/components/QualityNotice"
-import AssetCategoryLine from "@/components/AssetCategoryLine"
+import ScanDetailsLine from "@/components/ScanDetailsLine"
 import DecisionSupportPanel from "@/components/DecisionSupportPanel"
+import ReviewPanel from "@/components/ReviewPanel"
+import { useOptionalNav } from "@/components/NavContext"
 import ProjectionChart from "@/components/charts/ProjectionChart"
 import AstmScale from "@/components/charts/AstmScale"
 import { severityColor } from "@/utils/severity"
 import { distributionName } from "@/utils/classificationInfo"
-import type { AssetCategory, ScanResult, View } from "@/types"
+import type { ScanDetails, ScanOptions, ScanResult, View } from "@/types"
 
 export default function HistoryDetailPage({
   username,
@@ -25,19 +27,23 @@ export default function HistoryDetailPage({
   onNavigate,
   onDelete,
   onEdit,
-  categories,
-  onChangeCategory,
+  scanOptions,
+  onChangeDetails,
+  backLabel = "← Back to my scans",
 }: {
   username: string
   scan: ScanResult
   history: ScanResult[]
+  /** Where the Back button says it returns to. */
+  backLabel?: string
   onBack: () => void
   onNavigate: (v: View) => void
   onDelete: (scanId: string) => Promise<void>
   onEdit: (scanId: string, title: string) => Promise<void>
-  categories: AssetCategory[]
-  onChangeCategory: (scanId: string, assetCategory: string) => Promise<void>
+  scanOptions: ScanOptions
+  onChangeDetails: (scanId: string, details: ScanDetails) => Promise<void>
 }) {
+  const nav = useOptionalNav()
   const [menuOpen, setMenuOpen] = useState(false)
   const [displayed, setDisplayed] = useState<ScanResult>(scan)
   const [deletePending, setDeletePending] = useState(false)
@@ -298,10 +304,10 @@ export default function HistoryDetailPage({
                     Distribution: {distributionName(displayed.distributionType)}
                     <DistributionTooltip type={displayed.distributionType} align="right" />
                   </p>
-                  <AssetCategoryLine
+                  <ScanDetailsLine
                     scan={displayed}
-                    categories={categories}
-                    onChange={(assetCategory) => onChangeCategory(displayed.id, assetCategory)}
+                    scanOptions={scanOptions}
+                    onChange={(details) => onChangeDetails(displayed.id, details)}
                   />
                   <span
                     className="text-xs px-2 py-0.5 rounded-full font-medium self-start"
@@ -378,10 +384,23 @@ export default function HistoryDetailPage({
               {/* DSS */}
               <DecisionSupportPanel scan={displayed} color={color} />
 
+              {/* The engineer's verdict on the AI's reading */}
+              {nav && <ReviewPanel scan={displayed} />}
+
               {/* Back button */}
               <div className="flex flex-col items-center gap-3 pt-2">
                 {deleteError && (
                   <p className="text-sm text-red-300">{deleteError}</p>
+                )}
+                {nav && (
+                  <button
+                    type="button"
+                    onClick={() => nav.openScanReport(displayed)}
+                    className="px-8 py-3 rounded-xl font-semibold text-white transition-all text-sm hover:brightness-110"
+                    style={{ background: "var(--color-accent)" }}
+                  >
+                    Inspection report
+                  </button>
                 )}
                 <button
                   type="button"
@@ -410,7 +429,7 @@ export default function HistoryDetailPage({
                     (e.currentTarget.style.background = "transparent")
                   }
                 >
-                  ← Back to History
+                  {backLabel}
                 </button>
               </div>
             </div>

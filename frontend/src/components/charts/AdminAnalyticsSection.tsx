@@ -2,9 +2,10 @@ import ChartCard from "@/components/charts/ChartCard"
 import CountBarChart, { type CountDatum } from "@/components/charts/CountBarChart"
 import StatTile, { RangeFilter } from "@/components/charts/StatTile"
 import {
-  categoryCounts,
   distributionCounts,
+  environmentCounts,
   gradeCounts,
+  namedCounts,
   priorityCounts,
   toTable,
 } from "@/utils/analytics"
@@ -70,7 +71,8 @@ export default function AdminAnalyticsSection({
   const byPriority = priorityCounts(analytics?.byPriority ?? {})
   const byDistribution = distributionCounts(analytics?.byDistribution ?? {})
   const byLighting = ranked(analytics?.byLighting ?? {}, LIGHTING_LABELS)
-  const byCategory = categoryCounts(analytics?.byCategory ?? {})
+  const byEnvironment = environmentCounts(analytics?.byEnvironment ?? {})
+  const byElement = namedCounts(analytics?.byElement ?? {})
   const rejections = ranked(analytics?.rejections ?? {}, REJECTION_LABELS)
 
   const totalScans = analytics?.totalScans ?? 0
@@ -166,13 +168,23 @@ export default function AdminAnalyticsSection({
         </ChartCard>
 
         <ChartCard
-          title="Scans by asset category"
-          subtitle="The kind of object chosen for each scan. It sets the baseline corrosion rate."
-          table={toTable("Asset category", "Scans", byCategory)}
+          title="Scans by exposure environment"
+          subtitle="ISO 12944 corrosivity category of each scanned element, from C2 (low) to C5 (very high). It sets the baseline corrosion rate."
+          table={toTable("Environment", "Scans", byEnvironment)}
           empty={emptyScans}
           dimmed={dimmed}
         >
-          <CountBarChart data={byCategory} direction="bars" unit="scans" />
+          <CountBarChart data={byEnvironment} direction="columns" unit="scans" />
+        </ChartCard>
+
+        <ChartCard
+          title="Scans by element type"
+          subtitle="The kind of steel element scanned."
+          table={toTable("Element type", "Scans", byElement)}
+          empty={emptyScans}
+          dimmed={dimmed}
+        >
+          <CountBarChart data={byElement} direction="bars" unit="scans" />
         </ChartCard>
 
         <ChartCard

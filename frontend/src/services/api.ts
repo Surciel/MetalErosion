@@ -5,14 +5,27 @@ import type {
   AnalyzeCorrosionOptions,
   AnalysisResponse,
   AnalysisErrorKind,
-  AssetCategory,
   DecisionSupport,
   DistributionType,
   LightingStatus,
   MetricRange,
   QualityWarning,
   RecoveryRequest,
+  ScanOptions,
   ScanResult,
+  Asset,
+  AssetCondition,
+  AssetDetail,
+  AssetInput,
+  AssetTrend,
+  DashboardData,
+  RegisterTotals,
+  ReviewAgreement,
+  ScanAssetRef,
+  ScanReviewInfo,
+  Site,
+  SiteInput,
+  SiteRegister,
 } from "@/types"
 import { classificationExplanation, rustExplanation } from "@/utils/classificationInfo"
 
@@ -157,6 +170,8 @@ function toDecisionSupport(value: unknown): DecisionSupport | null {
   return {
     level: record.level,
     headline,
+    strategy: text(record.strategy),
+    surfacePreparation: text(record.surface_preparation),
     summary: text(record.summary),
     steps: texts(record.steps),
     actWithinDays: days(record.act_within_days),
@@ -195,8 +210,10 @@ function mapAnalysisResponse(
     spreadCoverage,
     spreadFactor,
     regressionSlope: numberOrNull(data.regression_slope),
-    assetCategory: typeof data.asset_category === "string" ? data.asset_category : null,
-    categoryRate: numberOrNull(data.category_rate),
+    elementType: typeof data.element_type === "string" ? data.element_type : null,
+    environment: typeof data.environment === "string" ? data.environment : null,
+    legacyCategory: typeof data.legacy_category === "string" ? data.legacy_category : null,
+    baselineRate: numberOrNull(data.baseline_rate),
     lightingStatus: toLightingStatus(data.lighting_status),
     qualityWarnings: toQualityWarnings(data.quality_warnings),
     priorityLevel: data.priority_level,
@@ -204,6 +221,9 @@ function mapAnalysisResponse(
     classificationLabel: data.priority_level,
     dss: data.recommendation,
     decisionSupport: toDecisionSupport(data.decision_support),
+    asset: toScanAssetRef(data.asset),
+    review: toScanReview(data.review),
+    inspectorName: typeof data.inspector_name === "string" ? data.inspector_name : null,
     rustExplanation: rustExplanation(data.rust_percentage, distributionType),
     classificationExplanation: classificationExplanation(
       data.astm_grade,
@@ -256,7 +276,9 @@ export async function analyzeCorrosion(
   const formData = new FormData()
   formData.append("file", file)
   if (options.title) formData.append("title", options.title)
-  if (options.assetCategory) formData.append("asset_category", options.assetCategory)
+  if (options.elementType) formData.append("element_type", options.elementType)
+  if (options.environment) formData.append("environment", options.environment)
+  if (options.assetId) formData.append("asset_id", options.assetId)
 
   const headers: HeadersInit = {}
   if (options.accessToken) {
@@ -455,7 +477,7 @@ export async function deleteScanHistory(
 export async function updateScanHistory(
   accessToken: string,
   scanId: string,
-  changes: { title?: string; assetCategory?: string },
+  changes: { title?: string; elementType?: string; environment?: string },
 ): Promise<ScanResult> {
   const response = await fetch(
     `${API_BASE_URL}/history/${encodeURIComponent(scanId)}`,
@@ -465,7 +487,11 @@ export async function updateScanHistory(
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ title: changes.title, asset_category: changes.assetCategory }),
+      body: JSON.stringify({
+        title: changes.title,
+        element_type: changes.elementType,
+        environment: changes.environment,
+      }),
     },
   )
 
@@ -484,7 +510,7 @@ type AdminAccountResponse = {
   id: string
   username: string
   email: string
-  role: "user" | "admin"
+  role: "user" | "engineer" | "admin"
   status?: "active" | "deactivated"
   created_at: string
   last_active_at?: string | null
@@ -555,30 +581,40 @@ export async function updateAdminAccount(
   return mapAdminAccount(account)
 }
 
-type AssetCategoryResponse = {
-  name: string
-  description: string
-  examples: string
-  rate_per_day: number
-  years_new_to_critical: number
-  basis: string
-  evidence: string
-  sources: string[]
+type ScanOptionsResponse = {
+  element_types: { name: string; examples: string; check: string }[]
+  environments: {
+    code: string
+    name: string
+    description: string
+    rate_per_day: number
+    years_new_to_critical: number
+    basis: string
+    evidence: string
+    sources: string[]
+  }[]
 }
 
-/** The asset categories, their rates and the evidence behind them, from the backend. */
-export async function getAssetCategories(accessToken: string): Promise<AssetCategory[]> {
-  const categories = await requestJson<AssetCategoryResponse[]>("/asset-categories", accessToken)
-  return categories.map((category) => ({
-    name: category.name,
-    description: category.description,
-    examples: category.examples,
-    ratePerDay: category.rate_per_day,
-    yearsNewToCritical: category.years_new_to_critical,
-    basis: category.basis,
-    evidence: category.evidence,
-    sources: category.sources ?? [],
-  }))
+/** The element types and exposure environments, with their rates, from the backend. */
+export async function getScanOptions(accessToken: string): Promise<ScanOptions> {
+  const options = await requestJson<ScanOptionsResponse>("/scan-options", accessToken)
+  return {
+    elementTypes: (options.element_types ?? []).map((item) => ({
+      name: item.name,
+      examples: item.examples,
+      check: item.check,
+    })),
+    environments: (options.environments ?? []).map((item) => ({
+      code: item.code,
+      name: item.name,
+      description: item.description,
+      ratePerDay: item.rate_per_day,
+      yearsNewToCritical: item.years_new_to_critical,
+      basis: item.basis,
+      evidence: item.evidence,
+      sources: item.sources ?? [],
+    })),
+  }
 }
 
 type AdminAnalyticsResponse = {
@@ -590,7 +626,8 @@ type AdminAnalyticsResponse = {
   by_priority: Record<string, number>
   by_distribution: Record<string, number>
   by_lighting: Record<string, number>
-  by_category: Record<string, number>
+  by_environment: Record<string, number>
+  by_element: Record<string, number>
   rejections: Record<string, number>
   rejections_available: boolean
 }
@@ -614,7 +651,8 @@ export async function getAdminAnalytics(
     byPriority: data.by_priority ?? {},
     byDistribution: data.by_distribution ?? {},
     byLighting: data.by_lighting ?? {},
-    byCategory: data.by_category ?? {},
+    byEnvironment: data.by_environment ?? {},
+    byElement: data.by_element ?? {},
     rejections: data.rejections ?? {},
     rejectionsAvailable: data.rejections_available ?? false,
   }
@@ -670,4 +708,314 @@ export async function updateAdminRecoveryRequest(
     },
   )
   return mapRecoveryRequest(request)
+}
+
+// ---------------------------------------------------------------------------
+// Inventory: sites, assets, conditions, review and the dashboard
+// ---------------------------------------------------------------------------
+
+type Raw = Record<string, unknown>
+
+const str = (value: unknown): string | null => (typeof value === "string" ? value : null)
+const num = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null
+const counts = (value: unknown): Record<string, number> =>
+  typeof value === "object" && value !== null ? (value as Record<string, number>) : {}
+
+function mapSite(raw: Raw): Site {
+  return {
+    id: String(raw.id),
+    name: str(raw.name) ?? "Unnamed site",
+    location: str(raw.location),
+    environment: str(raw.environment) ?? "",
+    isDemo: raw.is_demo === true,
+    createdBy: str(raw.created_by),
+    assetCount: num(raw.asset_count) ?? 0,
+  }
+}
+
+function mapTrend(raw: Raw): AssetTrend {
+  const source = raw.source === "measured" || raw.source === "no_growth" ? raw.source : "assumed"
+  return {
+    source,
+    inspections: num(raw.inspections) ?? 0,
+    usableInspections: num(raw.usable_inspections) ?? 0,
+    spanDays: num(raw.span_days) ?? 0,
+    assumedRate: num(raw.assumed_rate) ?? 0,
+    rateUsed: num(raw.rate_used) ?? 0,
+    fittedRate: num(raw.fitted_rate),
+    fittedRateLow: num(raw.fitted_rate_low),
+    fittedRateHigh: num(raw.fitted_rate_high),
+    rSquared: num(raw.r_squared),
+    blendWeight: num(raw.blend_weight) ?? 0,
+    intercept: num(raw.intercept),
+    firstInspection: str(raw.first_inspection),
+  }
+}
+
+function mapCondition(value: unknown): AssetCondition | null {
+  if (typeof value !== "object" || value === null) return null
+  const raw = value as Raw
+  const trend = mapTrend((raw.trend as Raw) ?? {})
+  return {
+    scanId: str(raw.scan_id),
+    date: str(raw.date),
+    rustPercent: num(raw.rust_percentage) ?? 0,
+    astmGrade: num(raw.astm_grade),
+    astmRating: str(raw.astm_rating),
+    priorityLevel: str(raw.priority_level),
+    actionLevel: num(raw.action_level) ?? 1,
+    strategy: str(raw.strategy) ?? "",
+    surfacePreparation: str(raw.surface_preparation) ?? "",
+    rateSource: trend.source,
+    ratePerDay: num(raw.rate_per_day) ?? 0,
+    trend,
+    nextThreshold: num(raw.next_threshold),
+    daysToNext: num(raw.days_to_next),
+    actWithinDays: num(raw.act_within_days),
+    dueDate: str(raw.due_date),
+    daysToCritical: num(raw.days_to_critical),
+    rustedAreaM2: num(raw.rusted_area_m2),
+    workAreaM2: num(raw.work_area_m2),
+    reviewStatus:
+      raw.review_status === "confirmed" || raw.review_status === "corrected" ? raw.review_status : null,
+    confidence: raw.confidence === "reduced" ? "reduced" : raw.confidence === "normal" ? "normal" : null,
+  }
+}
+
+function mapAsset(raw: Raw): Asset {
+  return {
+    id: String(raw.id),
+    siteId: String(raw.site_id),
+    tag: str(raw.tag) ?? "",
+    name: str(raw.name),
+    elementType: str(raw.element_type) ?? "",
+    surfaceAreaM2: num(raw.surface_area_m2),
+    coatingSystem: str(raw.coating_system),
+    lastCoatedOn: str(raw.last_coated_on),
+    notes: str(raw.notes),
+    createdBy: str(raw.created_by),
+    scanCount: num(raw.scan_count) ?? 0,
+    condition: mapCondition(raw.condition),
+    siteName: str(raw.site_name),
+  }
+}
+
+function mapTotals(raw: Raw): RegisterTotals {
+  return {
+    assets: num(raw.assets) ?? 0,
+    inspected: num(raw.inspected) ?? 0,
+    notInspected: num(raw.not_inspected) ?? 0,
+    needingAction: num(raw.needing_action) ?? 0,
+    critical: num(raw.critical) ?? 0,
+    overdue: num(raw.overdue) ?? 0,
+    byLevel: counts(raw.by_level),
+    byGrade: counts(raw.by_grade),
+    areaByStrategy: counts(raw.area_by_strategy),
+    workAreaM2: num(raw.work_area_m2) ?? 0,
+  }
+}
+
+function toScanAssetRef(value: unknown): ScanAssetRef | null {
+  if (typeof value !== "object" || value === null) return null
+  const raw = value as Raw
+  if (typeof raw.id !== "string") return null
+  return {
+    id: raw.id,
+    tag: str(raw.tag) ?? "",
+    name: str(raw.name),
+    siteId: str(raw.site_id) ?? "",
+    siteName: str(raw.site_name),
+  }
+}
+
+function toScanReview(value: unknown): ScanReviewInfo | null {
+  if (typeof value !== "object" || value === null) return null
+  const raw = value as Raw
+  if (raw.status !== "confirmed" && raw.status !== "corrected") return null
+  return {
+    status: raw.status,
+    byName: str(raw.by_name),
+    at: str(raw.at),
+    note: str(raw.note),
+    aiRustPercent: num(raw.ai_rust_percentage) ?? 0,
+    aiDistributionType: toDistributionType(str(raw.ai_distribution_type)),
+    aiAstmGrade: num(raw.ai_astm_grade) ?? 0,
+  }
+}
+
+function scanFromPayload(payload: unknown, what: string): ScanResult {
+  if (!isAnalysisResponse(payload)) {
+    throw new Error(`The ${what} response was not in the expected format.`)
+  }
+  return mapAnalysisResponse(payload)
+}
+
+const jsonInit = (method: string, body: unknown): RequestInit => ({
+  method,
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+})
+
+export async function getSites(accessToken: string): Promise<Site[]> {
+  return (await requestJson<Raw[]>("/sites", accessToken)).map(mapSite)
+}
+
+export async function createSite(accessToken: string, site: SiteInput): Promise<Site> {
+  return mapSite(await requestJson<Raw>("/sites", accessToken, jsonInit("POST", site)))
+}
+
+export async function updateSite(accessToken: string, siteId: string, changes: Partial<SiteInput>): Promise<Site> {
+  return mapSite(
+    await requestJson<Raw>(`/sites/${encodeURIComponent(siteId)}`, accessToken, jsonInit("PATCH", changes)),
+  )
+}
+
+export async function deleteSite(accessToken: string, siteId: string): Promise<void> {
+  await requestJson<Raw>(`/sites/${encodeURIComponent(siteId)}`, accessToken, { method: "DELETE" })
+}
+
+export async function getSiteRegister(accessToken: string, siteId: string): Promise<SiteRegister> {
+  const data = await requestJson<Raw>(`/sites/${encodeURIComponent(siteId)}`, accessToken)
+  return {
+    site: mapSite(data.site as Raw),
+    assets: ((data.assets as Raw[]) ?? []).map(mapAsset),
+    totals: mapTotals((data.totals as Raw) ?? {}),
+  }
+}
+
+const assetBody = (asset: Partial<AssetInput>) => ({
+  tag: asset.tag,
+  name: asset.name,
+  element_type: asset.elementType,
+  surface_area_m2: asset.surfaceAreaM2,
+  coating_system: asset.coatingSystem,
+  last_coated_on: asset.lastCoatedOn,
+  notes: asset.notes,
+})
+
+export async function createAsset(accessToken: string, siteId: string, asset: AssetInput): Promise<Asset> {
+  return mapAsset(
+    await requestJson<Raw>(`/sites/${encodeURIComponent(siteId)}/assets`, accessToken, jsonInit("POST", assetBody(asset))),
+  )
+}
+
+export async function updateAsset(accessToken: string, assetId: string, changes: Partial<AssetInput>): Promise<Asset> {
+  return mapAsset(
+    await requestJson<Raw>(`/assets/${encodeURIComponent(assetId)}`, accessToken, jsonInit("PATCH", assetBody(changes))),
+  )
+}
+
+export async function deleteAsset(accessToken: string, assetId: string): Promise<void> {
+  await requestJson<Raw>(`/assets/${encodeURIComponent(assetId)}`, accessToken, { method: "DELETE" })
+}
+
+export async function getAssetDetail(accessToken: string, assetId: string): Promise<AssetDetail> {
+  const data = await requestJson<Raw>(`/assets/${encodeURIComponent(assetId)}`, accessToken)
+  return {
+    asset: mapAsset(data.asset as Raw),
+    site: mapSite(data.site as Raw),
+    scans: ((data.scans as unknown[]) ?? []).filter(isAnalysisResponse).map((scan) => mapAnalysisResponse(scan)),
+  }
+}
+
+/** An engineer confirms a scan, or corrects its rust % and distribution with a note. */
+export async function reviewScan(
+  accessToken: string,
+  scanId: string,
+  review:
+    | { action: "confirm"; note?: string }
+    | { action: "correct"; rustPercent: number; distributionType?: DistributionType | null; note: string },
+): Promise<ScanResult> {
+  const body =
+    review.action === "confirm"
+      ? { action: "confirm", note: review.note }
+      : {
+          action: "correct",
+          rust_percentage: review.rustPercent,
+          distribution_type: review.distributionType ?? undefined,
+          note: review.note,
+        }
+  return scanFromPayload(
+    await requestJson<unknown>(`/history/${encodeURIComponent(scanId)}/review`, accessToken, jsonInit("POST", body)),
+    "review",
+  )
+}
+
+export async function clearScanReview(accessToken: string, scanId: string): Promise<ScanResult> {
+  return scanFromPayload(
+    await requestJson<unknown>(`/history/${encodeURIComponent(scanId)}/review`, accessToken, { method: "DELETE" }),
+    "review",
+  )
+}
+
+export async function getDashboard(accessToken: string): Promise<DashboardData> {
+  const data = await requestJson<Raw>("/dashboard", accessToken)
+  const totals = (data.totals as Raw) ?? {}
+  const deadlines = (data.deadlines as Raw) ?? {}
+  const reviews = (data.reviews as Raw) ?? {}
+  const sources = (data.rate_sources as Raw) ?? {}
+  return {
+    totals: {
+      ...mapTotals(totals),
+      sites: num(totals.sites) ?? 0,
+      inspections: num(totals.inspections) ?? 0,
+      measuredRateAssets: num(totals.measured_rate_assets) ?? 0,
+    },
+    bySite: ((data.by_site as Raw[]) ?? []).map((row) => ({
+      siteId: String(row.site_id),
+      site: str(row.site) ?? "Unnamed site",
+      environment: str(row.environment) ?? "",
+      isDemo: row.is_demo === true,
+      assets: num(row.assets) ?? 0,
+      notInspected: num(row.not_inspected) ?? 0,
+      byLevel: counts(row.by_level),
+      workAreaM2: num(row.work_area_m2) ?? 0,
+    })),
+    byElement: ((data.by_element as Raw[]) ?? []).map((row) => ({
+      elementType: str(row.element_type) ?? "Not recorded",
+      byLevel: counts(row.by_level),
+    })),
+    deadlines: {
+      overdue: num(deadlines.overdue) ?? 0,
+      months: ((deadlines.months as Raw[]) ?? []).map((row) => ({
+        month: str(row.month) ?? "",
+        count: num(row.count) ?? 0,
+      })),
+      later: num(deadlines.later) ?? 0,
+    },
+    mostUrgent: ((data.most_urgent as Raw[]) ?? []).map(mapAsset),
+    inspectionsByMonth: ((data.inspections_by_month as Raw[]) ?? []).map((row) => ({
+      month: str(row.month) ?? "",
+      count: num(row.count) ?? 0,
+      averageRust: num(row.average_rust),
+    })),
+    reviews: {
+      confirmed: num(reviews.confirmed) ?? 0,
+      corrected: num(reviews.corrected) ?? 0,
+      unreviewed: num(reviews.unreviewed) ?? 0,
+    },
+    rateSources: {
+      assumed: num(sources.assumed) ?? 0,
+      measured: num(sources.measured) ?? 0,
+      no_growth: num(sources.no_growth) ?? 0,
+    },
+  }
+}
+
+export async function getReviewAgreement(accessToken: string): Promise<ReviewAgreement> {
+  const data = await requestJson<Raw>("/review-agreement", accessToken)
+  return {
+    available: data.available === true,
+    reviewed: num(data.reviewed) ?? 0,
+    confirmed: num(data.confirmed) ?? 0,
+    corrected: num(data.corrected) ?? 0,
+    exact: num(data.exact) ?? 0,
+    withinOne: num(data.within_one) ?? 0,
+    pairs: ((data.pairs as Raw[]) ?? []).map((row) => ({
+      aiGrade: num(row.ai_grade) ?? 0,
+      engineerGrade: num(row.engineer_grade) ?? 0,
+      count: num(row.count) ?? 0,
+    })),
+  }
 }

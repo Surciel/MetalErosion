@@ -2,6 +2,7 @@ import { useMemo, useState } from "react"
 import Header from "@/components/Header"
 import SideMenu from "@/components/SideMenu"
 import AdminAnalyticsSection from "@/components/charts/AdminAnalyticsSection"
+import { ROLE_LABELS } from "@/utils/condition"
 import type {
   Account,
   AdminAnalytics,
@@ -201,7 +202,8 @@ export default function AdminPage({
               >
                 <option value="all">All roles</option>
                 <option value="admin">Admins</option>
-                <option value="user">Users</option>
+                <option value="user">Inspectors</option>
+                <option value="engineer">Engineers</option>
               </select>
               <label className="sr-only" htmlFor="account-status-filter">Filter by status</label>
               <select
@@ -244,7 +246,7 @@ export default function AdminPage({
                       <p className="font-medium text-white">{account.username}</p>
                       <p className="text-xs text-white/40 mt-1">{account.email}</p>
                     </td>
-                    <td className="px-5 py-4 text-white/65 capitalize">{account.role}</td>
+                    <td className="px-5 py-4 text-white/65">{ROLE_LABELS[account.role]}</td>
                     <td className="px-5 py-4"><StatusBadge status={account.status} /></td>
                     <td className="px-5 py-4 text-white/45 text-xs">{formatDate(account.createdAt)}</td>
                     <td className="px-5 py-4">
@@ -278,7 +280,7 @@ export default function AdminPage({
             <div className="flex flex-col gap-4">
               <label className="text-xs text-white/55">Username<input value={draft.username} onChange={(event) => setDraft({ ...draft, username: event.target.value })} className="mt-1 w-full px-3 py-2 rounded-lg text-sm text-white outline-none border border-white/10" style={{ background: "var(--color-btn)" }} /></label>
               <label className="text-xs text-white/55">Email<input type="email" value={draft.email} onChange={(event) => setDraft({ ...draft, email: event.target.value })} className="mt-1 w-full px-3 py-2 rounded-lg text-sm text-white outline-none border border-white/10" style={{ background: "var(--color-btn)" }} /></label>
-              <label className="text-xs text-white/55">Role<select value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value as Account["role"] })} className="mt-1 w-full px-3 py-2 rounded-lg text-sm text-white outline-none border border-white/10" style={{ background: "var(--color-btn)" }}><option value="user">User</option><option value="admin">Admin</option></select></label>
+              <label className="text-xs text-white/55">Role<select value={draft.role} onChange={(event) => setDraft({ ...draft, role: event.target.value as Account["role"] })} className="mt-1 w-full px-3 py-2 rounded-lg text-sm text-white outline-none border border-white/10" style={{ background: "var(--color-btn)" }}><option value="user">Inspector</option><option value="engineer">Engineer</option><option value="admin">Admin</option></select></label>
             </div>
             <div className="flex justify-end gap-3 mt-6"><button onClick={() => setEditingAccount(null)} className="px-4 py-2 rounded-lg text-sm text-white/55 hover:text-white">Cancel</button><button onClick={saveEdit} className="px-4 py-2 rounded-lg text-sm font-medium text-white" style={{ background: "var(--color-accent)" }}>Save changes</button></div>
           </div>
