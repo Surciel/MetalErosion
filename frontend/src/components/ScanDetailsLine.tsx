@@ -70,6 +70,11 @@ export default function ScanDetailsLine({
           {asset.siteName && ` · ${asset.siteName}`}
         </p>
       )}
+      {asset && (
+        <p className="mb-0.5 text-white/50">
+          This scan's projection uses the assumed rate for its exposure. The asset page shows the rate measured from all its inspections.
+        </p>
+      )}
       <p className="flex flex-wrap items-center gap-x-1">
         <span>
           Element:{" "}

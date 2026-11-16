@@ -69,7 +69,7 @@ function Facts({ rows }: { rows: [string, ReactNode][] }) {
 
 function Signatures({ left, right }: { left: string; right: string }) {
   return (
-    <div className="mt-10 grid grid-cols-2 gap-10 text-[12px] text-neutral-700">
+    <div className="report-section mt-6 grid grid-cols-2 gap-10 text-[12px] text-neutral-700">
       {[left, right].map((label) => (
         <div key={label}>
           <div className="h-10 border-b border-neutral-500" />
@@ -133,6 +133,8 @@ export function ScanReportPage({ scan, onBack }: { scan: ScanResult; onBack: () 
   const condition = asset?.condition ?? null
   // The asset's condition describes its latest inspection; use it only when this is that one.
   const isLatest = Boolean(condition && condition.scanId === scan.id)
+  // When this is the asset's latest inspection and its rate was measured, the trend deadline is the one to use.
+  const measuredTiming = Boolean(isLatest && condition && condition.rateSource !== "assumed" && (detail?.scans.length ?? 0) > 1)
   const review = scan.review
 
   return (
@@ -145,7 +147,7 @@ export function ScanReportPage({ scan, onBack }: { scan: ScanResult; onBack: () 
         <Section title="Identification">
           <Facts
             rows={[
-              ["Site", scan.asset?.siteName ?? "Not assigned to a site"],
+              ["Site", scan.asset?.siteName ? `${scan.asset.siteName}${detail?.site?.isDemo ? " (demo data: simulated inspection dates)" : ""}` : "Not assigned to a site"],
               ["Asset", scan.asset ? `${scan.asset.tag}${scan.asset.name ? ` (${scan.asset.name})` : ""}` : "Scan with no asset"],
               ["Element type", scan.elementType ?? "Not recorded"],
               ["Exposure environment", scan.environment ? `${scan.environment}${environment ? ` (${environment.name})` : ""}` : "Not recorded"],
@@ -169,7 +171,7 @@ export function ScanReportPage({ scan, onBack }: { scan: ScanResult; onBack: () 
                   ["Distribution", distributionName(scan.distributionType)],
                   ["Strategy", answer ? `Level ${answer.level}: ${answer.strategy}` : scan.dss],
                   ["Surface preparation", answer?.surfacePreparation || "-"],
-                  ["Act within", answer?.actWithinDays != null ? formatDays(answer.actWithinDays) : answer?.level === 6 ? "Now" : "No work due"],
+                  [measuredTiming ? "Act within (assumed rate)" : "Act within", answer?.actWithinDays != null ? formatDays(answer.actWithinDays) : answer?.level === 6 ? "Now" : "No work due"],
                   ["Inspect again in", answer?.rescanInDays != null ? formatDays(answer.rescanInDays) : "-"],
                   ["Rate used", scan.regressionSlope !== null ? `${formatRate(scan.regressionSlope)} (assumed for the environment)` : "-"],
                 ]}
@@ -200,7 +202,8 @@ export function ScanReportPage({ scan, onBack }: { scan: ScanResult; onBack: () 
             {condition && <p className="mt-2 text-neutral-700">{trendReading(condition)}</p>}
             {condition && isLatest && (
               <p className="mt-1 text-neutral-700">
-                From the trend: {deadlineText(condition).toLowerCase()} ({RATE_SOURCE_LABELS[condition.rateSource].toLowerCase()} rate).
+                Deadline from this asset's trend ({RATE_SOURCE_LABELS[condition.rateSource].toLowerCase()} rate): {deadlineText(condition)}.
+                {measuredTiming && " This replaces the assumed-rate timing in the result above."}
                 {asset.surfaceAreaM2 !== null && ` Area to treat: ${formatArea(condition.workAreaM2)} of ${formatArea(asset.surfaceAreaM2)}.`}
               </p>
             )}
@@ -352,13 +355,13 @@ export function SiteReportPage() {
                         </td>
                         {condition ? (
                           <>
-                            <td className="py-1 pr-2">{formatDate(condition.date)}</td>
+                            <td className="whitespace-nowrap py-1 pr-2">{formatDate(condition.date)}</td>
                             <td className="py-1 pr-2 text-right">{condition.rustPercent}%</td>
                             <td className="py-1 pr-2">{condition.astmRating}</td>
                             <td className="py-1 pr-2">L{condition.actionLevel} {condition.strategy}</td>
                             <td className="py-1 pr-2">{deadlineText(condition)}</td>
                             <td className="py-1 pr-2">{RATE_SOURCE_LABELS[condition.rateSource]}</td>
-                            <td className="py-1 text-right">{formatArea(condition.workAreaM2)}</td>
+                            <td className="whitespace-nowrap py-1 text-right">{formatArea(condition.workAreaM2)}</td>
                           </>
                         ) : (
                           <td colSpan={7} className="py-1 text-neutral-500">Not inspected yet</td>

@@ -110,7 +110,7 @@ export default function DashboardPage() {
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatTile label="Assets inspected" value={`${totals.inspected} of ${totals.assets}`} detail={`${totals.sites} site${totals.sites === 1 ? "" : "s"}, ${totals.inspections} inspections`} />
             <StatTile label="Need coating work" value={String(totals.needingAction)} detail="Action level 2 or higher" />
-            <StatTile label="Critical or overdue" value={String(totals.overdue)} detail={`${totals.critical} need a structural assessment`} />
+            <StatTile label="Critical or overdue" value={String(totals.overdue)} detail={`${totals.critical} ${totals.critical === 1 ? "needs" : "need"} a structural assessment`} />
             <StatTile label="Area to treat" value={formatArea(totals.workAreaM2)} detail="Where a coated area is recorded" />
           </div>
 
@@ -181,7 +181,7 @@ export default function DashboardPage() {
               <ReviewShare reviews={data.reviews} />
               {manager && agreement && agreement.reviewed > 0 && <AgreementSummary agreement={agreement} />}
               <Reading>
-                {`${data.reviews.confirmed + data.reviews.corrected} of ${reviewTotal} inspections are reviewed; ${data.reviews.corrected} were corrected.`}
+                {`${data.reviews.confirmed + data.reviews.corrected} of ${reviewTotal} inspections are reviewed; ${data.reviews.corrected} ${data.reviews.corrected === 1 ? "was" : "were"} corrected.`}
               </Reading>
             </ChartCard>
           </div>

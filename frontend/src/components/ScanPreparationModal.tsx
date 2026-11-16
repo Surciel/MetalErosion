@@ -235,7 +235,7 @@ export default function ScanPreparationModal({
             handleConfirm()
           }}
         >
-          <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto p-5 md:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)] gap-5 overflow-y-auto p-4 sm:p-5 md:grid-cols-[minmax(0,1fr)_360px]">
             <div className="flex items-center justify-center overflow-hidden rounded-xl bg-black/35 p-3 md:sticky md:top-0 md:self-start">
               <img src={sourceUrl} alt="Scan preview" className="block max-h-[56vh] max-w-full rounded-lg object-contain" />
             </div>

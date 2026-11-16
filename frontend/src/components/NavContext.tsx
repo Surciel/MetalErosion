@@ -23,6 +23,8 @@ export interface Nav {
   optionsError: string
   selectedSiteId: string | null
   selectedAssetId: string | null
+  /** Where an opened scan was opened from, so the sidebar can show that section. */
+  scanBackTo: View
 }
 
 export const NavContext = createContext<Nav | null>(null)

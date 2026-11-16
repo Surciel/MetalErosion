@@ -86,6 +86,8 @@ export default function TrendChart({
   const data = [...rows.values()].sort((left, right) => left.t - right.t)
   const highest = Math.max(...data.map((item) => Math.max(item.rust ?? 0, item.fit ?? 0, item.projection ?? 0)))
   const yMax = highest <= 1 ? 1.2 : highest <= 10 ? 11 : highest <= 33 ? 36 : 100
+  // Round, evenly spaced ticks for each range (the top of the range is headroom, not a tick).
+  const yTicks = yMax === 1.2 ? [0, 0.25, 0.5, 0.75, 1] : yMax === 11 ? [0, 2, 4, 6, 8, 10] : yMax === 36 ? [0, 10, 20, 30] : [0, 25, 50, 75, 100]
   const visibleThresholds = THRESHOLDS.filter((item) => item.value <= yMax)
   const xMin = data[0].t
   const xMax = data[data.length - 1].t
@@ -122,6 +124,7 @@ export default function TrendChart({
           <YAxis
             type="number"
             domain={[0, yMax]}
+            ticks={yTicks}
             width={40}
             tickFormatter={(value: number) => `${value}%`}
             tick={{ fill: ink.muted, fontSize: 11 }}

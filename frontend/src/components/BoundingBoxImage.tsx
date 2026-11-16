@@ -7,6 +7,8 @@ type BoundingBoxImageProps = {
   className?: string
   imageClassName?: string
   expandable?: boolean
+  /** Show "No corrosion regions detected" when there are no boxes (off for small thumbnails). */
+  emptyLabel?: boolean
 }
 
 export default function BoundingBoxImage({
@@ -16,6 +18,7 @@ export default function BoundingBoxImage({
   className = "",
   imageClassName = "",
   expandable = false,
+  emptyLabel = true,
 }: BoundingBoxImageProps) {
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 })
   const [expanded, setExpanded] = useState(false)
@@ -138,6 +141,11 @@ export default function BoundingBoxImage({
       />
       {renderBoxes(false)}
       {renderTooltip()}
+      {emptyLabel && boxes.length === 0 && (
+        <p className="pointer-events-none absolute left-2 top-2 rounded bg-black/70 px-2 py-1 text-xs text-white/75">
+          No corrosion regions detected for this scan
+        </p>
+      )}
       </div>
       {expanded && (
         <div
@@ -177,11 +185,6 @@ export default function BoundingBoxImage({
             </button>
           </div>
         </div>
-      )}
-      {boxes.length === 0 && (
-        <p className="pointer-events-none absolute bottom-2 left-2 rounded bg-black/70 px-2 py-1 text-xs text-white/75">
-          No corrosion regions detected for this scan
-        </p>
       )}
     </>
   )

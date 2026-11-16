@@ -14,12 +14,31 @@ import { toTable } from "@/utils/analytics"
 import type { Asset, AssetInput, RegisterTotals, SiteInput, SiteRegister } from "@/types"
 
 /** One sentence that says what the register's numbers mean for planning. */
+/** One line for the grade chart: the worst grade and the most common one. */
+export function gradeReading(byGrade: Record<string, number>): string {
+  const grades = Object.entries(byGrade)
+    .filter(([, count]) => count > 0)
+    .map(([grade, count]) => ({ grade: Number(grade), count }))
+  if (grades.length === 0) return "No asset has been graded yet."
+  const worst = grades.reduce((a, b) => (b.grade < a.grade ? b : a))
+  const common = grades.reduce((a, b) => (b.count > a.count || (b.count === a.count && b.grade < a.grade) ? b : a))
+  const assets = (n: number) => `${n} asset${n === 1 ? "" : "s"}`
+  return `Worst grade on this site: ${worst.grade} (${assets(worst.count)}). Most common: grade ${common.grade} (${assets(common.count)}).`
+}
+
+/** One line for the area chart: the total and the biggest share. */
+export function areaReading(areas: { label: string; value: number; detail?: string }[]): string {
+  const total = areas.reduce((sum, item) => sum + item.value, 0)
+  const largest = areas.reduce((a, b) => (b.value > a.value ? b : a))
+  return `${formatArea(total)} of work in total; the largest share is ${(largest.detail ?? largest.label).toLowerCase()} (${formatArea(largest.value)}).`
+}
+
 export function registerReading(totals: RegisterTotals): string {
   if (totals.inspected === 0) return "No asset on this site has been inspected yet."
   const parts = [`${totals.needingAction} of ${totals.inspected} inspected assets need coating work`]
-  if (totals.critical > 0) parts.push(`${totals.critical} need a structural assessment first`)
-  if (totals.overdue > totals.critical) parts.push(`${totals.overdue - totals.critical} are past their deadline`)
-  if (totals.notInspected > 0) parts.push(`${totals.notInspected} have not been inspected`)
+  if (totals.critical > 0) parts.push(`${totals.critical} ${totals.critical === 1 ? "needs" : "need"} a structural assessment first`)
+  if (totals.overdue > totals.critical) parts.push(`${totals.overdue - totals.critical} ${totals.overdue - totals.critical === 1 ? "is" : "are"} past ${totals.overdue - totals.critical === 1 ? "its" : "their"} deadline`)
+  if (totals.notInspected > 0) parts.push(`${totals.notInspected} ${totals.notInspected === 1 ? "has" : "have"} not been inspected`)
   return `${parts.join("; ")}.`
 }
 
@@ -144,7 +163,7 @@ export default function SitePage() {
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <StatTile label="Assets" value={String(totals.assets)} detail={`${totals.inspected} inspected, ${totals.notInspected} not yet`} />
             <StatTile label="Need coating work" value={String(totals.needingAction)} detail="Action level 2 or higher" />
-            <StatTile label="Critical or overdue" value={String(totals.overdue)} detail={`${totals.critical} need a structural assessment`} />
+            <StatTile label="Critical or overdue" value={String(totals.overdue)} detail={`${totals.critical} ${totals.critical === 1 ? "needs" : "need"} a structural assessment`} />
             <StatTile label="Area to treat" value={formatArea(totals.workAreaM2)} detail="Where a coated area is recorded" />
           </div>
 
@@ -165,6 +184,7 @@ export default function SitePage() {
               empty={totals.inspected === 0 ? "No asset has been inspected yet." : undefined}
             >
               <CountBarChart data={gradeBars(totals.byGrade)} direction="columns" unit="assets" />
+              <Reading>{gradeReading(totals.byGrade)}</Reading>
             </ChartCard>
             {areaData.length > 0 && (
               <ChartCard
@@ -174,6 +194,7 @@ export default function SitePage() {
                 className="lg:col-span-2"
               >
                 <CountBarChart data={areaData} direction="bars" unit="m²" />
+                <Reading>{areaReading(areaData)}</Reading>
               </ChartCard>
             )}
           </div>
@@ -212,6 +233,7 @@ export function RegisterTable({
         <h2 className="text-sm font-semibold text-white">Priority register</h2>
         <p className="mt-1 text-xs text-white/55">Ranked by urgency: the highest action level first, then the nearest deadline.</p>
       </div>
+      <p className="px-5 pt-3 text-[11px] text-white/45 md:hidden">Swipe the table sideways to see every column.</p>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-left text-sm">
           <thead>

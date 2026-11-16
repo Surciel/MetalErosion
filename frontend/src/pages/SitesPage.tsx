@@ -70,8 +70,8 @@ export default function SitesPage() {
               </div>
               <p className="text-xs text-white/55">{site.location ?? "No location recorded"}</p>
               <div className="mt-auto flex items-center justify-between gap-3 text-xs text-white/70">
-                <span className="rounded-full border border-white/20 px-2.5 py-1">{site.environment} · {environmentName(site.environment)}</span>
-                <span>{site.assetCount} asset{site.assetCount === 1 ? "" : "s"}</span>
+                <span className="min-w-0 truncate rounded-full border border-white/20 px-2.5 py-1" title={environmentName(site.environment)}>{site.environment} · {environmentName(site.environment)}</span>
+                <span className="flex-shrink-0 whitespace-nowrap">{site.assetCount} asset{site.assetCount === 1 ? "" : "s"}</span>
               </div>
             </button>
           ))}

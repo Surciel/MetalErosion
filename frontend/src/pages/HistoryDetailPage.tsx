@@ -122,7 +122,7 @@ export default function HistoryDetailPage({
       <div className="flex flex-1 overflow-hidden">
         {/* ── Left filmstrip panel ──────────────────────────────────── */}
         <div
-          className="flex flex-col flex-shrink-0 overflow-y-auto"
+          className="hidden flex-shrink-0 flex-col overflow-y-auto md:flex"
           style={{
             width: "150px",
             background: "var(--color-header)",
@@ -169,6 +169,7 @@ export default function HistoryDetailPage({
                       src={s.imageUrl}
                       alt={s.imageName}
                       coordinates={s.boxCoordinates}
+                      emptyLabel={false}
                       className="h-full w-full"
                       imageClassName="h-full w-full object-cover"
                     />
@@ -206,11 +207,11 @@ export default function HistoryDetailPage({
         <div className="flex-1 overflow-y-auto">
           {/* Section 1: Overview */}
           <section
-            className="py-10 px-8"
+            className="px-4 py-6 sm:px-8 sm:py-10"
             style={{ background: "var(--color-bg)" }}
           >
             <QualityNotice lightingStatus={displayed.lightingStatus} warnings={displayed.qualityWarnings} className="max-w-4xl mx-auto mb-6" />
-            <div className="max-w-4xl mx-auto flex gap-6">
+            <div className="max-w-4xl mx-auto flex flex-col gap-6 md:flex-row">
               {/* Image */}
               <div className="flex-1 min-w-0">
                 <div
@@ -257,8 +258,7 @@ export default function HistoryDetailPage({
 
               {/* Quick stats */}
               <div
-                className="flex flex-col gap-4"
-                style={{ width: "200px", flexShrink: 0 }}
+                className="flex flex-col gap-4 md:w-[200px] md:flex-shrink-0"
               >
                 <div
                   className="flex-1 rounded-2xl p-5 flex flex-col gap-2"
@@ -322,11 +322,11 @@ export default function HistoryDetailPage({
 
           {/* Section 2: Deep analysis */}
           <section
-            className="py-10 px-8"
+            className="px-4 py-6 sm:px-8 sm:py-10"
             style={{ background: "var(--color-header)" }}
           >
             <div className="max-w-4xl mx-auto flex flex-col gap-4">
-              <div className="flex gap-4">
+              <div className="flex flex-col gap-4 sm:flex-row">
                 {/* Corrosion detail */}
                 <div
                   className="flex-1 rounded-2xl p-6 flex flex-col gap-3"

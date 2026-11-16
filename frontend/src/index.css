@@ -232,3 +232,13 @@ body {
 *:hover::-webkit-scrollbar-thumb {
   opacity: 1;
 }
+
+/* Older pages lay out on a 12-column grid; on phones each block takes the full width. */
+@media (max-width: 767px) {
+  .page-grid {
+    gap: 12px !important;
+  }
+  .page-grid > * {
+    grid-column: 1 / -1 !important;
+  }
+}

@@ -71,7 +71,11 @@ export default function SideMenu({
   onLogout?: () => void
 }) {
   const nav = useOptionalNav()
-  const currentView = nav?.view
+  // A scan opened from an asset belongs to the Sites section, not to My scans.
+  const currentView =
+    nav && (nav.view === "history-detail" || nav.view === "report-scan") && nav.scanBackTo === "asset"
+      ? "asset"
+      : nav?.view
   const admin = nav ? nav.role === "admin" : isAdmin
   const items = admin ? [...ITEMS, ADMIN_ITEM] : ITEMS
   const go = (view: View) => {

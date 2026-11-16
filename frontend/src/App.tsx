@@ -607,6 +607,7 @@ export default function App() {
     optionsError,
     selectedSiteId,
     selectedAssetId,
+    scanBackTo,
   }
 
   const page = (() => {

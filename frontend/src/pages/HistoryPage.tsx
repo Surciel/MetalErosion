@@ -261,6 +261,7 @@ export default function HistoryPage({
                           src={scan.imageUrl}
                           alt={scan.imageName}
                           coordinates={scan.boxCoordinates}
+                          emptyLabel={false}
                           className="h-full w-full"
                           imageClassName="h-full w-full object-cover"
                         />

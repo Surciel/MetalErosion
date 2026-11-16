@@ -107,6 +107,7 @@ export default function AssetPage() {
     <PageShell
       title={asset ? asset.tag : "Asset"}
       subtitle={asset ? `${asset.name ? `${asset.name} · ` : ""}${asset.elementType}` : undefined}
+      badge={site?.isDemo ? <span className="rounded-full border border-amber-300/50 px-2 py-0.5 text-[11px] text-amber-200">Demo data</span> : undefined}
       crumbs={[
         { label: "Sites and assets", onClick: () => nav.navigate("sites") },
         { label: site?.name ?? "Site", onClick: site ? () => nav.openSite(site.id) : undefined },
