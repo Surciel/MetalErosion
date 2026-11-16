@@ -4,6 +4,7 @@ import BoundingBoxImage from "@/components/BoundingBoxImage"
 import { useNav } from "@/components/NavContext"
 import TrendChart from "@/components/charts/TrendChart"
 import { ThresholdBar } from "@/components/charts/LevelCharts"
+import { ActionLadder, ActionTimeline, StepCards, Verdict } from "@/components/dss/DssVisuals"
 import { trendReading } from "@/pages/AssetPage"
 import { registerCsvRows, registerReading } from "@/pages/SitePage"
 import { ApiError, getAssetDetail, getSiteRegister } from "@/services/api"
@@ -45,9 +46,9 @@ function SheetHeader({ title, reference }: { title: string; reference: string })
   )
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, children, splittable = false }: { title: string; children: ReactNode; splittable?: boolean }) {
   return (
-    <section className="report-section mb-6">
+    <section className={`${splittable ? "" : "report-section "}mb-6`}>
       <h2 className="mb-2 border-b border-neutral-300 pb-1 text-[12px] font-bold uppercase tracking-wider text-neutral-700">{title}</h2>
       {children}
     </section>
@@ -136,11 +137,28 @@ export function ScanReportPage({ scan, onBack }: { scan: ScanResult; onBack: () 
   // When this is the asset's latest inspection and its rate was measured, the trend deadline is the one to use.
   const measuredTiming = Boolean(isLatest && condition && condition.rateSource !== "assumed" && (detail?.scans.length ?? 0) > 1)
   const review = scan.review
+  // Two layouts to compare: the answer as pictures with the wording in an appendix, or the full text.
+  const [layout, setLayout] = useState<"compact" | "full">("compact")
+  const compact = layout === "compact" && Boolean(answer)
 
   return (
     <PageShell title="Inspection report" crumbs={[{ label: "Back to the scan", onClick: onBack }, { label: "Inspection report" }]}>
       {error && <div className="no-print mb-4"><Notice>{error}</Notice></div>}
-      <ReportToolbar onBack={onBack} />
+      <ReportToolbar onBack={onBack}>
+        <div className="flex rounded-lg border border-white/20 p-0.5 text-xs" role="group" aria-label="Report layout">
+          {(["compact", "full"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => setLayout(option)}
+              aria-pressed={layout === option}
+              className={`rounded-md px-3 py-1.5 font-medium transition-colors ${layout === option ? "bg-white/15 text-white" : "text-white/60 hover:text-white"}`}
+            >
+              {option === "compact" ? "Compact" : "Full text"}
+            </button>
+          ))}
+        </div>
+      </ReportToolbar>
       <Sheet>
         <SheetHeader title="Corrosion Inspection Report" reference={scan.id} />
 
@@ -165,7 +183,12 @@ export function ScanReportPage({ scan, onBack }: { scan: ScanResult; onBack: () 
             </div>
             <div>
               <Facts
-                rows={[
+                rows={compact ? [
+                  ["Rusted area", <span key="rust" className="text-lg font-bold">{scan.rustPercent}%</span>],
+                  ["ASTM D610 rating", scan.astmRating],
+                  ["Distribution", distributionName(scan.distributionType)],
+                  ["Rate used", scan.regressionSlope !== null ? `${formatRate(scan.regressionSlope)} (assumed for the environment)` : "-"],
+                ] : [
                   ["Rusted area", <span key="rust" className="text-lg font-bold">{scan.rustPercent}%</span>],
                   ["ASTM D610 rating", scan.astmRating],
                   ["Distribution", distributionName(scan.distributionType)],
@@ -179,10 +202,34 @@ export function ScanReportPage({ scan, onBack }: { scan: ScanResult; onBack: () 
               <p className="mt-2 text-[11px] text-neutral-500">Boxes on the photo mark the largest rust areas measured.</p>
             </div>
           </div>
-          <div className="mt-5"><ThresholdBar rustPercent={scan.rustPercent} tone="light" /></div>
+          {!compact && <div className="mt-5"><ThresholdBar rustPercent={scan.rustPercent} tone="light" /></div>}
         </Section>
 
-        {answer && (
+        {answer && compact && (
+          <Section title="Recommended work" splittable>
+            <div className="report-section"><Verdict answer={answer} tone="light" /></div>
+            <div className="report-section mt-5 grid gap-6 sm:grid-cols-2">
+              <div>
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Where this scan sits</p>
+                <ActionLadder level={answer.level} rustPercent={scan.rustPercent} tone="light" />
+              </div>
+              <div>
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">What happens when</p>
+                <ActionTimeline scan={scan} answer={answer} tone="light" />
+              </div>
+            </div>
+            {measuredTiming && (
+              <p className="mt-3 text-[12px] text-neutral-700">These timings use the assumed rate. The deadline from this asset's measured trend is in the trend section below and replaces them.</p>
+            )}
+            <div className="report-section">
+              <p className="mb-2 mt-5 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">What to do</p>
+              <StepCards cards={answer.stepCards} tone="light" interactive={false} />
+              <p className="mt-2 text-[11px] text-neutral-500">The full instruction for each step, the basis and the limits are in the appendix.</p>
+            </div>
+          </Section>
+        )}
+
+        {answer && !compact && (
           <Section title="Recommended work">
             <p className="mb-2 font-semibold">{answer.headline} {answer.summary}</p>
             <ol className="list-decimal space-y-1 pl-5">
@@ -203,7 +250,7 @@ export function ScanReportPage({ scan, onBack }: { scan: ScanResult; onBack: () 
             {condition && isLatest && (
               <p className="mt-1 text-neutral-700">
                 Deadline from this asset's trend ({RATE_SOURCE_LABELS[condition.rateSource].toLowerCase()} rate): {deadlineText(condition)}.
-                {measuredTiming && " This replaces the assumed-rate timing in the result above."}
+                {measuredTiming && " This replaces the assumed-rate timing above."}
                 {asset.surfaceAreaM2 !== null && ` Area to treat: ${formatArea(condition.workAreaM2)} of ${formatArea(asset.surfaceAreaM2)}.`}
               </p>
             )}
@@ -228,7 +275,7 @@ export function ScanReportPage({ scan, onBack }: { scan: ScanResult; onBack: () 
           )}
         </Section>
 
-        {answer && answer.limits.length > 0 && (
+        {answer && !compact && answer.limits.length > 0 && (
           <Section title="Limits of this result">
             <ul className="list-disc space-y-1 pl-5 text-neutral-700">
               {answer.limits.map((limit) => <li key={limit}>{limit}</li>)}
@@ -236,8 +283,34 @@ export function ScanReportPage({ scan, onBack }: { scan: ScanResult; onBack: () 
           </Section>
         )}
 
-        <Signatures left="Inspected by" right="Reviewed by (engineer)" />
-        <Disclaimer />
+        <div className="report-section">
+          <Signatures left="Inspected by" right="Reviewed by (engineer)" />
+          <Disclaimer />
+        </div>
+
+        {answer && compact && (
+          <div className="report-appendix mt-10 border-t-2 border-neutral-900 pt-6">
+            <h2 className="mb-4 text-base font-bold text-neutral-900">Appendix: full wording</h2>
+            <Section title="Steps in full">
+              <ol className="list-decimal space-y-1 pl-5">
+                {answer.steps.map((step) => <li key={step}>{step}</li>)}
+              </ol>
+            </Section>
+            <Section title="Basis">
+              <ul className="list-disc space-y-1 pl-5 text-neutral-700">
+                {answer.reasons.map((reason) => <li key={reason}>{reason}</li>)}
+              </ul>
+              {answer.ifDelayed && <p className="mt-3 text-neutral-700"><span className="font-semibold">If this is left: </span>{answer.ifDelayed}</p>}
+            </Section>
+            {answer.limits.length > 0 && (
+              <Section title="Limits of this result">
+                <ul className="list-disc space-y-1 pl-5 text-neutral-700">
+                  {answer.limits.map((limit) => <li key={limit}>{limit}</li>)}
+                </ul>
+              </Section>
+            )}
+          </div>
+        )}
       </Sheet>
     </PageShell>
   )

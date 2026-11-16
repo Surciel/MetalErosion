@@ -171,6 +171,55 @@ LEVEL_STEPS: dict[int, tuple[str, ...]] = {
     ),
 }
 
+# The short form of the answer, for the at-a-glance view. These summarise the texts above;
+# they add no rule. One instruction per level, then one card per step in LEVEL_STEPS:
+# (title of two or three words, the standard or grade it names or None, icon name).
+LEVEL_ACTIONS = {
+    1: "No coating work needed",
+    2: "Touch up the rust spots",
+    3: "Repair the rusted spots",
+    4: "Repair the spots, then overcoat the whole surface",
+    5: "Strip and recoat the whole surface",
+    6: "Stop and get a structural assessment",
+}
+
+LEVEL_STEP_CARDS: dict[int, tuple[tuple[str, Optional[str], str], ...]] = {
+    1: (
+        ("Record the condition", None, "clipboard"),
+        ("Keep it clean and dry", None, "drop"),
+    ),
+    2: (
+        ("Degrease", "SSPC-SP 1", "spray"),
+        ("Hand-tool clean", "SSPC-SP 2", "brush"),
+        ("Prime and touch up", "Same day", "paint"),
+    ),
+    3: (
+        ("Degrease", "SSPC-SP 1", "spray"),
+        ("Power-tool clean", "SSPC-SP 3", "grinder"),
+        ("Spot-prime", "Same day", "paint"),
+        ("Finish coats", "Overlap sound coat", "layers"),
+    ),
+    4: (
+        ("Power-tool clean and prime", "SSPC-SP 3", "grinder"),
+        ("Wash and abrade", None, "spray"),
+        ("Test patch", "Compatibility", "flask"),
+        ("Full overcoat", None, "layers"),
+    ),
+    5: (
+        ("Abrasive blast", "SSPC-SP 6 / Sa 2", "blast"),
+        ("Inspect the bare steel", None, "search"),
+        ("Full coating system", "ISO 12944", "layers"),
+    ),
+    6: (
+        ("Restrict use", None, "stop"),
+        ("Engineer assessment", "Thickness", "ruler"),
+        ("Repair or replace", None, "wrench"),
+        ("Blast and recoat", "Sa 2", "blast"),
+    ),
+}
+CHECK_CARD = ("Check the weak points", None, "search")
+SAFETY_CARD = ("Safety inspection", None, "shield")
+
 # Used when no element type was recorded (scans saved before element types existed).
 GENERIC_CHECK = "Check joints, fixings and places where water collects."
 GENERIC_SAFETY = "Have load-bearing and safety parts physically inspected before they are relied on."
@@ -268,9 +317,16 @@ def build_decision_support(
     exposure = ENVIRONMENT_BY_CODE.get(environment or "")
 
     steps = list(LEVEL_STEPS[level])
+    cards = list(LEVEL_STEP_CARDS[level])
     steps.append(element.check if element else GENERIC_CHECK)
+    cards.append(CHECK_CARD)
     if level >= 5:
         steps.append(element.safety if element else GENERIC_SAFETY)
+        cards.append(SAFETY_CARD)
+    step_cards = [
+        {"title": title, "standard": standard, "icon": icon, "detail": detail}
+        for (title, standard, icon), detail in zip(cards, steps, strict=True)
+    ]
 
     # --- By when ---------------------------------------------------------------------
     threshold = _next_threshold(level)
@@ -369,6 +425,8 @@ def build_decision_support(
     return {
         "level": level,
         "headline": headline,
+        "action": LEVEL_ACTIONS[level],
+        "step_cards": step_cards,
         "strategy": strategy,
         "surface_preparation": surface_preparation,
         "summary": summary,

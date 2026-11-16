@@ -1,51 +1,89 @@
 import { DssTooltip } from "@/components/ClassificationTooltips"
-import { describeDuration } from "@/utils/classificationInfo"
-import type { ScanResult } from "@/types"
+import { useOptionalNav } from "@/components/NavContext"
+import { ActionLadder, ActionTimeline, FactChips, SectionLabel, StepCards, Verdict } from "@/components/dss/DssVisuals"
+import type { DecisionSupport, ScanResult } from "@/types"
 
-const describeDays = (days: number): string => describeDuration(days, false)
-
-function Chip({ label, value, color }: { label: string; value: string; color?: string }) {
+/** The full wording of the answer: steps, reasons, the cost of waiting, limits and sources. */
+export function FullExplanation({ answer }: { answer: DecisionSupport }) {
   return (
-    <span
-      className="inline-flex items-baseline gap-1.5 rounded-full border px-3 py-1 text-xs"
-      style={{ borderColor: color ?? "rgba(255,255,255,0.2)" }}
-    >
-      <span className="text-white/50">{label}</span>
-      <span className="font-semibold text-white" style={color ? { color } : undefined}>
-        {value}
-      </span>
-    </span>
-  )
-}
-
-function Heading({ children }: { children: string }) {
-  return (
-    <p className="mb-2 text-[11px] font-mono uppercase tracking-wider text-white/40">{children}</p>
+    <div className="mt-4 grid gap-5 text-sm leading-relaxed">
+      <div className="grid gap-5 md:grid-cols-2">
+        <div>
+          <SectionLabel tone="dark">What to do</SectionLabel>
+          <ol className="flex list-decimal flex-col gap-2 pl-5 text-white/85">
+            {answer.steps.map((step) => <li key={step}>{step}</li>)}
+          </ol>
+        </div>
+        <div>
+          <SectionLabel tone="dark">Why this recommendation</SectionLabel>
+          <ul className="flex list-disc flex-col gap-2 pl-5 text-white/75">
+            {answer.reasons.map((reason) => <li key={reason}>{reason}</li>)}
+          </ul>
+        </div>
+      </div>
+      {answer.ifDelayed && (
+        <div>
+          <SectionLabel tone="dark">If this is left</SectionLabel>
+          <p className="text-white/80">{answer.ifDelayed}</p>
+        </div>
+      )}
+      {answer.limits.length > 0 && (
+        <div>
+          <SectionLabel tone="dark">Limits of this result</SectionLabel>
+          <ul className="flex list-disc flex-col gap-1.5 pl-5 text-xs text-white/60">
+            {answer.limits.map((limit) => <li key={limit}>{limit}</li>)}
+          </ul>
+        </div>
+      )}
+      {answer.sources.length > 0 && (
+        <div>
+          <SectionLabel tone="dark">Sources for these rules</SectionLabel>
+          <ul className="flex list-disc flex-col gap-1.5 pl-5 text-xs text-white/60">
+            {answer.sources.map((source) => (
+              <li key={source.label}>
+                {source.label}
+                {source.url && (
+                  <>
+                    {" "}
+                    <a href={source.url} target="_blank" rel="noopener noreferrer" className="underline decoration-white/30 hover:text-white">
+                      Open
+                    </a>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   )
 }
 
 /**
- * The Decision Support System answer for a scan: what to do, how, by when, why, what
- * happens if it is left, how far the result can be trusted, and the sources of the rules.
- * Falls back to the one-line recommendation when the backend sent no structured answer.
+ * The Decision Support System answer for a scan, at a glance: the verdict and the time
+ * available, where the scan sits among the six action levels, what happens when, and the
+ * steps as cards. The full wording is one click away. Falls back to the one-line
+ * recommendation when the backend sent no structured answer.
  */
 export default function DecisionSupportPanel({
   scan,
   color,
 }: {
   scan: ScanResult
-  /** Severity colour of the scan, used for the headline accent. */
+  /** Severity colour of the scan, used for the panel's accent. */
   color: string
 }) {
   const answer = scan.decisionSupport
+  const nav = useOptionalNav()
+  const environmentName = nav?.scanOptions.environments.find((option) => option.code === scan.environment)?.name
 
   return (
     <div
-      className="flex flex-col gap-5 rounded-2xl p-6"
+      className="flex flex-col gap-6 rounded-2xl p-5 sm:p-6"
       style={{ background: "rgba(255,255,255,0.05)", borderLeft: `3px solid ${color}` }}
     >
       <p className="text-xs font-mono uppercase tracking-wider text-white/40">
-        DECISION SUPPORT SYSTEM
+        DECISION SUPPORT
         <DssTooltip />
       </p>
 
@@ -53,102 +91,50 @@ export default function DecisionSupportPanel({
         <p className="text-sm leading-relaxed text-white/80">{scan.dss}</p>
       ) : (
         <>
-          {/* What to do, and by when */}
           <div className="flex flex-col gap-3">
-            <p className="text-xl font-semibold leading-snug text-white">{answer.headline}</p>
-            {answer.surfacePreparation && answer.level > 1 && (
-              <p className="text-sm text-white/65">
-                Surface preparation: <span className="text-white/90">{answer.surfacePreparation}</span>
+            <Verdict answer={answer} />
+            {answer.confidence === "reduced" && (
+              <p className="self-start rounded-full border border-amber-300/60 px-3 py-1 text-xs text-amber-200">
+                Photo quality lowers confidence. Retake the photo before acting.
               </p>
             )}
-            <div className="flex flex-wrap gap-2">
-              {answer.level === 6 && <Chip label="Act" value="now" color={color} />}
-              {answer.actWithinDays !== null && (
-                <Chip
-                  label="Act within"
-                  value={answer.actWithinDays === 0 ? "now" : describeDays(answer.actWithinDays)}
-                  color={color}
-                />
-              )}
-              {answer.rescanInDays !== null && (
-                <Chip label="Inspect again in" value={describeDays(answer.rescanInDays)} />
-              )}
-              {answer.confidence === "reduced" && (
-                <Chip label="Confidence" value="reduced by photo quality" color="#fbbf24" />
-              )}
+            <div>
+              <SectionLabel tone="dark">Based on</SectionLabel>
+              <FactChips scan={scan} environmentName={environmentName} />
             </div>
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            {/* How */}
             <div>
-              <Heading>What to do</Heading>
-              <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm leading-relaxed text-white/85">
-                {answer.steps.map((step) => (
-                  <li key={step}>{step}</li>
-                ))}
-              </ol>
+              <SectionLabel tone="dark">Where this scan sits</SectionLabel>
+              <ActionLadder level={answer.level} rustPercent={scan.rustPercent} />
             </div>
-
-            {/* Why */}
             <div>
-              <Heading>Why this recommendation</Heading>
-              <ul className="flex list-disc flex-col gap-2 pl-5 text-sm leading-relaxed text-white/75">
-                {answer.reasons.map((reason) => (
-                  <li key={reason}>{reason}</li>
-                ))}
-              </ul>
+              <SectionLabel tone="dark">What happens when</SectionLabel>
+              <ActionTimeline scan={scan} answer={answer} />
             </div>
           </div>
 
-          {/* What if I wait */}
-          {answer.ifDelayed && (
-            <div className="rounded-xl border border-white/10 p-4">
-              <Heading>If this is left</Heading>
-              <p className="text-sm leading-relaxed text-white/80">{answer.ifDelayed}</p>
-            </div>
-          )}
+          <div>
+            <SectionLabel tone="dark">What to do</SectionLabel>
+            {answer.stepCards.length > 0 ? (
+              <StepCards cards={answer.stepCards} />
+            ) : (
+              <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm leading-relaxed text-white/85">
+                {answer.steps.map((step) => <li key={step}>{step}</li>)}
+              </ol>
+            )}
+          </div>
 
-          {/* How sure */}
-          {answer.limits.length > 0 && (
-            <div>
-              <Heading>Limits of this result</Heading>
-              <ul className="flex list-disc flex-col gap-1.5 pl-5 text-xs leading-relaxed text-white/60">
-                {answer.limits.map((limit) => (
-                  <li key={limit}>{limit}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Based on what */}
-          {answer.sources.length > 0 && (
-            <details className="text-xs text-white/60">
-              <summary className="cursor-pointer select-none text-white/70 hover:text-white">
-                Sources for these rules ({answer.sources.length})
-              </summary>
-              <ul className="mt-2 flex list-disc flex-col gap-1.5 pl-5 leading-relaxed">
-                {answer.sources.map((source) => (
-                  <li key={source.label}>
-                    {source.label}
-                    {source.url && (
-                      <>
-                        {" "}
-                        <a
-                          href={source.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="underline decoration-white/30 hover:text-white"
-                        >
-                          Open
-                        </a>
-                      </>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
+          <details className="group border-t border-white/10 pt-4">
+            <summary className="cursor-pointer select-none text-sm text-white/70 hover:text-white">
+              Show the full explanation
+              <span className="ml-2 text-xs text-white/40">
+                steps in full, reasons, if this is left, {answer.limits.length} limit{answer.limits.length === 1 ? "" : "s"}, {answer.sources.length} source{answer.sources.length === 1 ? "" : "s"}
+              </span>
+            </summary>
+            <FullExplanation answer={answer} />
+          </details>
         </>
       )}
     </div>

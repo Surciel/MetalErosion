@@ -167,9 +167,22 @@ function toDecisionSupport(value: unknown): DecisionSupport | null {
       })
     : []
 
+  const stepCards = Array.isArray(record.step_cards)
+    ? record.step_cards.flatMap((item) => {
+        if (typeof item !== "object" || item === null) return []
+        const card = item as Record<string, unknown>
+        const title = text(card.title)
+        return title
+          ? [{ title, standard: text(card.standard) || null, icon: text(card.icon), detail: text(card.detail) }]
+          : []
+      })
+    : []
+
   return {
     level: record.level,
     headline,
+    action: text(record.action) || headline.replace(/\.$/, ""),
+    stepCards,
     strategy: text(record.strategy),
     surfacePreparation: text(record.surface_preparation),
     summary: text(record.summary),

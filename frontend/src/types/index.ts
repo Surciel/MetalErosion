@@ -193,10 +193,26 @@ export interface ScanResult {
 }
 
 /** The rule-based maintenance answer for a scan (backend/decision_support.py). */
+/** One maintenance step in short form, for the at-a-glance view. */
+export interface StepCard {
+  /** Two or three words, e.g. "Power-tool clean". */
+  title: string
+  /** The standard or grade the step names, e.g. "SSPC-SP 3"; null when none. */
+  standard: string | null
+  /** Icon name, drawn by components/dss/StepIcon.tsx. */
+  icon: string
+  /** The full sentence of the step. */
+  detail: string
+}
+
 export interface DecisionSupport {
   /** Action level, 1 (no repair) to 6 (assess for replacement). */
   level: number
   headline: string
+  /** The answer as one short instruction, e.g. "Repair the rusted spots". */
+  action: string
+  /** The steps in short form; one per entry in `steps`. Empty for answers saved before they existed. */
+  stepCards: StepCard[]
   /** Maintenance painting strategy, e.g. "Spot repair". */
   strategy: string
   /** Surface preparation grade, e.g. "Power tool cleaning, SSPC-SP 3". */

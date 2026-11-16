@@ -168,6 +168,16 @@ body {
   .report-section {
     break-inside: avoid;
   }
+  /* The compact report's full wording starts on its own page. */
+  .report-appendix {
+    break-before: page;
+    margin-top: 0 !important;
+  }
+  /* The level ladder and badges carry meaning in their fills, so print them. */
+  .report-sheet {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 }
 
 .history-select-wrap {

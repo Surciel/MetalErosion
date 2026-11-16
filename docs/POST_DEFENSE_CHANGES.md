@@ -284,3 +284,36 @@ Every chart has a "Reading:" line in plain words and a table view. Status colour
 ### Check by hand
 - [ ] On a phone: the menu button opens the navigation; "Scan this asset" opens the camera; the result reads top to bottom.
 - [ ] On a laptop: the sidebar stays visible and no page scrolls sideways.
+
+---
+
+## Decision support, shown instead of written (panel feedback)
+
+The panel found the Decision Support answer too wordy. It showed about 300 words: the headline, five steps as full sentences, five reasons, a paragraph on waiting, the limits and the sources. The rules and thresholds are unchanged; only the presentation changed.
+
+| Before | Now |
+|---|---|
+| Headline and a surface-preparation line | Level badge, one short instruction ("Repair the rusted spots") and a tile with the time available ("Act within 8 months") |
+| Level shown as a number in text | A ladder of the six action levels with this scan marked, and the next threshold named |
+| "Act within", "Inspect again" and "If this is left" in sentences | A timeline: today, inspect again, act by, critical (33%). It is labelled as not to scale |
+| Five steps as sentences | Numbered cards with an icon, two or three words and the SSPC grade. Tapping a card shows the full sentence |
+| Five reasons as bullets | Chips: rust and grade, pattern, exposure, element |
+| Limits and sources always shown | "Show the full explanation", one click away. A photo-quality warning stays visible |
+
+The backend adds two fields to the answer, `action` and `step_cards` (title, standard, icon and the full sentence). Each card is one of the existing steps, and the test checks that cards and steps always match.
+
+**Inspection report: two layouts to compare.** The report toolbar has a **Compact / Full text** switch.
+- **Compact:** the badge, ladder, timeline and step cards on the main pages; the full wording, basis and limits in an appendix that starts on a new page. For a scan with a trend, it prints as two pages plus a one-page appendix.
+- **Full text:** the earlier report, unchanged.
+
+Pick one after comparing; the other can then be removed.
+
+### Check by hand
+- [ ] Open a scan: the answer reads at a glance; tapping a step card shows its full sentence.
+- [ ] "Show the full explanation" opens the steps, reasons, limits and sources.
+- [ ] A level 6 scan shows "Act now" and no timeline; a level 1 scan shows "Inspect again in" and no action date.
+- [ ] Print the report in both layouts and compare.
+
+### Notes for the paper
+- The figure of the DSS output in Chapter 4 needs a new screenshot.
+- The short step titles and icons are a summary for display. The sentences remain the specification and stay in the full explanation and the report appendix.
